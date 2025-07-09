@@ -78,7 +78,7 @@ logx=0
 logy=1
 
 
-y1=-15
+y1=-13
 rainbow=0
 
 color=6
@@ -326,7 +326,7 @@ padtype=0
 }
 C {sg13g2_pr/sg13_lv_nmos.sym} 1060 -630 0 0 {name=M1
 l=0.13u
-w=0.15u
+w=0.150u
 ng=1
 m=1
 model=sg13_lv_nmos
@@ -350,7 +350,7 @@ spiceprefix=X
 }
 C {sg13g2_pr/sg13_lv_nmos.sym} 1300 -410 0 0 {name=M4
 l=0.13u
-w=0.15u
+w=0.150u
 ng=1
 m=1
 model=sg13_lv_nmos
