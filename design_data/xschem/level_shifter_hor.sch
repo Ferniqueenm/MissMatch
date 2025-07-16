@@ -135,8 +135,6 @@ N -850 -440 -830 -440 {lab=1.2V}
 N -830 -500 -830 -440 {lab=1.2V}
 N -850 -500 -830 -500 {lab=1.2V}
 N -850 -660 -850 -500 {lab=1.2V}
-N 400 -470 400 -390 {lab=Ssense}
-N 400 -330 400 -260 {lab=Source}
 C {devices/title.sym} -410 -30 0 0 {name=l5 author="Copyright 2025 IHP PDK Authors"}
 C {devices/iopin.sym} -140 -200 1 0 {name=p1 lab=Gate}
 C {devices/iopin.sym} -620 -190 1 0 {name=p4 lab=Vss}
@@ -236,8 +234,19 @@ m=1
 model=sg13_hv_nmos
 spiceprefix=X
 }
-C {res.sym} 400 -360 0 0 {name=R1
-value=0.1
-footprint=1206
-device=resistor
-m=1}
+C {sg13g2_pr/sg13_hv_nmos.sym} 290 -370 0 0 {name=M10
+l=0.45u
+w=0.3u
+ng=1
+m=1
+model=sg13_hv_nmos
+spiceprefix=X
+}
+C {sg13g2_pr/sg13_hv_pmos.sym} 500 -370 0 1 {name=M11
+l=0.4u
+w=0.3u
+ng=1
+m=1
+model=sg13_hv_pmos
+spiceprefix=X
+}

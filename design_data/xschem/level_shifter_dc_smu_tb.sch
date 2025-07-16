@@ -32,7 +32,7 @@ node="V(G1)
 V(G2)"}
 B 2 1585 -1475 2385 -1075 {flags=graph
 
-y2=0.12
+y2=0.11
 ypos1=0
 ypos2=2
 divy=5
@@ -61,7 +61,7 @@ Dsense
 Dforce"}
 B 2 1585 -625 2385 -225 {flags=graph
 
-y2=-4.2
+y2=-4.5
 ypos1=0
 ypos2=2
 divy=5
@@ -78,7 +78,7 @@ logx=0
 logy=1
 
 
-y1=-13
+y1=-16
 rainbow=0
 
 color=6
