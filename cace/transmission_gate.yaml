@@ -80,11 +80,11 @@ parameters:
         description: The On-Resistance
         unit: ohm
         minimum:
-          value: 15
+          value: 20
         typical:
-          value: 25
+          value: 80
         maximum:
-          value: 40
+          value: 130
     tool:
       ngspice:
         template: transmission_gate_tb_RON.sch
@@ -100,4 +100,6 @@ parameters:
         enumerate: [3.0] 
       Vn:
         enumerate: [0.0] 
+      m1_w:
+        enumerate: [40.0e-6, 80.0e-6, 120.0e-6, 160.0e-6] 
 
