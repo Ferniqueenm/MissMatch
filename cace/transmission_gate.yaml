@@ -1,0 +1,103 @@
+#--------------------------------------------------------------
+# CACE circuit characterization file
+#--------------------------------------------------------------
+
+name:           transmission_gate
+description:    A simple HV transmission gate
+PDK:            ihp-sg13g2
+
+cace_format:    5.2
+
+authorship:
+  designer:  IHP-Authors       
+  company:   IHP
+  creation_date:    
+  license:          Apache 2.0
+
+paths:
+  root:             ..
+  schematic:        design_data/xschem/
+  netlist:          design_data/netlist/
+  documentation:    docs
+
+pins:
+  VDD:
+    description: Positive analog power supply
+    type: power
+    direction: inout
+    Vmin: 2.9
+    Vmax: 3.3
+  VSS:
+    description: Analog ground
+    type: ground
+    direction: inout
+
+default_conditions:
+  vdd:
+    description: Analog power supply voltage
+    display: Vdd
+    unit: V
+    typical: 3.0
+  vin:
+    description: Input voltage
+    display: Vin
+    unit: V
+    typical: 1.6
+  Vp:
+    description: Input voltage
+    display: Vin
+    unit: V
+    typical: 2.9
+  Vn:
+    description: Input voltage
+    display: Vin
+    unit: V
+    typical: 0.0
+  m1_w:
+    description: N transistor width
+    display: m1_w
+    typical: 40.0e-6
+  m2_w:
+    description: P transistor width
+    display: m2_w
+    typical: 40.0e-6
+  corner:
+    description: Process corner
+    display: Corner
+    typical: tt
+  temperature:
+    description: Ambient temperature
+    display: Temp
+    unit: °C
+    typical: 27
+
+parameters:
+  op_params1:
+    display: OP Params
+    spec:
+      ron:
+        display: Ron
+        description: The On-Resistance
+        unit: ohm
+        minimum:
+          value: 15
+        typical:
+          value: 25
+        maximum:
+          value: 40
+    tool:
+      ngspice:
+        template: transmission_gate_tb_RON.sch
+        format: ascii
+        suffix: .data
+        variables: [ron]
+    conditions:
+      corner:
+        enumerate: [tt, ff, ss] # fs, sf
+      vdd:
+        enumerate: [3.0] 
+      Vp:
+        enumerate: [3.0] 
+      Vn:
+        enumerate: [0.0] 
+
