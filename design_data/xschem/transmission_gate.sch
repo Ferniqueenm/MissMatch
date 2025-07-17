@@ -61,7 +61,7 @@ C {devices/iopin.sym} 70 260 1 0 {name=p4 lab=vss
 C {devices/ipin.sym} -150 -150 0 0 {name=p5 lab=en_n}
 C {sg13g2_pr/sg13_hv_nmos.sym} 0 90 3 0 {name=M1
 l=0.45u
-w=\{m1_w_val\}
+w=\{m1_w\}
 ng=10
 m=1
 model=sg13_hv_nmos
@@ -69,7 +69,7 @@ spiceprefix=X
 }
 C {sg13g2_pr/sg13_hv_pmos.sym} 0 -100 3 1 {name=M2
 l=0.4u
-w=\{m2_w_val\}
+w=\{m2_w\}
 ng=10
 m=1
 model=sg13_hv_pmos
