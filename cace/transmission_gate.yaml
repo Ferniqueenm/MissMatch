@@ -53,6 +53,11 @@ default_conditions:
     display: Vin
     unit: V
     typical: 0.0
+  Vin:
+    description: Input voltage
+    display: Vin
+    unit: V
+    typical: 3.0
   m1_w:
     description: N transistor width
     display: m1_w
@@ -100,6 +105,32 @@ parameters:
         enumerate: [3.0] 
       Vn:
         enumerate: [0.0] 
-      m1_w:
-        enumerate: [40.0e-6, 80.0e-6, 120.0e-6, 160.0e-6] 
 
+  op_params2:
+    display: Op Params
+    spec:
+      ron:
+        display: Ileak
+        description: Leakage current
+        unit: nA
+        minimum:
+          value: 20
+        typical:
+          value: 80
+        maximum:
+          value: 130
+    tool:
+      ngspice:
+        template: transmission_gate_tb_Ileak.sch
+        format: ascii
+        suffix: .data
+        variables: [Ileak1]
+    conditions:
+      corner:
+        enumerate: [tt, ff, ss] # fs, sf
+      vdd:
+        enumerate: [3.0] 
+      Vp:
+        enumerate: [0.0] 
+      Vn:
+        enumerate: [3.0] 
