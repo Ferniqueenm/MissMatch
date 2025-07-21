@@ -50,12 +50,12 @@ value="
 C {devices/code_shown.sym} -330 -460 0 0 {name=NGSPICE only_toplevel=true 
 value="
 .param temp=27
-.param m1_w = 10u
-.param m2_w = 10u
+.param m1_w = 20u
+.param m2_w = 20u
 .control
 save all 
 op
-let Roff=3.0/I(Vp2)
+let Roff=1.2/I(Vp2)
 print I(Vp2) Roff
 .endc
 "}
@@ -82,4 +82,4 @@ C {devices/lab_pin.sym} -240 50 0 0 {name=p9 sig_type=std_logic lab=en_n}
 C {devices/gnd.sym} 200 110 0 0 {name=l6 lab=GND}
 C {devices/ammeter.sym} 150 20 3 0 {name=Vp2}
 C {devices/vsource.sym} 200 70 0 0 {name=Vin1 value=0}
-C {transmission_gate_lv.sym} -50 40 0 0 {name=x1}
+C {transmission_gate.sym} -50 40 0 0 {name=x1}

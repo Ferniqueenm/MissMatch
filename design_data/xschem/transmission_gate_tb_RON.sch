@@ -6,7 +6,7 @@ S {}
 E {}
 B 2 930 -230 1730 170 {flags=graph
 
-y2=3.3
+y2=0.2
 ypos1=0
 ypos2=2
 divy=5
@@ -23,7 +23,7 @@ logx=0
 logy=0
 
 
-y1=1.2
+y1=0.11
 rainbow=0
 
 color=6
@@ -57,7 +57,7 @@ node="en_n
 en_p"}
 B 2 1780 -230 2580 170 {flags=graph
 
-y2=410
+y2=18
 ypos1=0
 ypos2=2
 divy=5
@@ -74,7 +74,7 @@ logx=0
 logy=0
 
 
-y1=280
+y1=17
 rainbow=0
 
 
@@ -152,9 +152,11 @@ C {devices/code_shown.sym} -330 -460 0 0 {name=NGSPICE only_toplevel=true
 value="
 .param temp=27
 .param Iload=500u
+.param m1_w=20u
+.param m2_w=20u
 .control
 save all 
-dc I0 10u 5m 10u
+dc I0 -5m 5m 11u
 let Ron=(V(V_in)-V(V_out1))/I(Vp2)
 write dc_RON.raw
 set hcopydevtype=svg

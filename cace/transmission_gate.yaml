@@ -110,7 +110,7 @@ parameters:
     display: Op Params
     spec:
       ron:
-        display: Ileak
+        display: Ileak1
         description: Leakage current
         unit: nA
         minimum:
