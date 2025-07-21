@@ -6,14 +6,14 @@ S {}
 E {}
 B 2 930 -230 1730 170 {flags=graph
 
-y2=0.2
+y2=3.8
 ypos1=0
 ypos2=2
 divy=5
 subdivy=1
 unity=1
-x1=1e-05
-x2=0.005
+x1=-0.005
+x2=0.004999
 divx=5
 subdivx=1
 
@@ -23,21 +23,21 @@ logx=0
 logy=0
 
 
-y1=0.11
+y1=3.6
 rainbow=0
 
 color=6
 node=v_out1}
 B 2 930 -660 1730 -260 {flags=graph
 
-y2=3.3
+y2=1.3
 ypos1=0
 ypos2=2
 divy=5
 subdivy=1
 unity=1
-x1=1e-05
-x2=0.005
+x1=-0.005
+x2=0.004999
 divx=5
 subdivx=1
 
@@ -57,14 +57,14 @@ node="en_n
 en_p"}
 B 2 1780 -230 2580 170 {flags=graph
 
-y2=18
+y2=1100000
 ypos1=0
 ypos2=2
 divy=5
-subdivy=1
+subdivy=4
 unity=1
-x1=1e-05
-x2=0.005
+x1=-0.005
+x2=0.004999
 divx=5
 subdivx=1
 
@@ -74,7 +74,7 @@ logx=0
 logy=0
 
 
-y1=17
+y1=-890000
 rainbow=0
 
 
@@ -88,8 +88,8 @@ ypos2=2
 divy=5
 subdivy=1
 unity=1
-x1=1e-05
-x2=0.005
+x1=-0.005
+x2=0.004999
 divx=5
 subdivx=1
 
@@ -99,7 +99,7 @@ logx=0
 logy=0
 
 
-y1=2e-05
+y1=-0.005
 rainbow=0
 
 
@@ -152,8 +152,8 @@ C {devices/code_shown.sym} -330 -460 0 0 {name=NGSPICE only_toplevel=true
 value="
 .param temp=27
 .param Iload=500u
-.param m1_w=20u
-.param m2_w=20u
+.param m1_w=10u
+.param m2_w=10u
 .control
 save all 
 dc I0 -5m 5m 11u
@@ -169,7 +169,7 @@ hardcopy Ron.svg Ron title 'ON resistance' xlabel 'Input voltage' ylabel 'Ron'
 hardcopy Lin.svg V_in V_out1  title 'Gate linearity' xlabel 'Input voltage' ylabel 'Outputs' ylimit 0 1.2
 .endc
 "}
-C {devices/vsource.sym} 110 -620 0 0 {name=Vpow value=3.3}
+C {devices/vsource.sym} 110 -620 0 0 {name=Vpow value=1.2}
 C {devices/title.sym} -130 260 0 0 {name=l5 author="Copyright 2023 IHP PDK Authors"}
 C {devices/launcher.sym} 1030 230 0 0 {name=h5
 descr="load waves" 
@@ -178,8 +178,8 @@ tclcommand="xschem raw_read $netlist_dir/dc_RON.raw dc"
 C {devices/gnd.sym} -50 110 0 0 {name=l2 lab=GND}
 C {devices/ammeter.sym} -50 -60 0 0 {name=Vp}
 C {devices/gnd.sym} 110 -570 0 0 {name=l1 lab=GND}
-C {devices/vsource.sym} 110 -430 0 0 {name=Vin value=200m}
-C {devices/vsource.sym} 470 -620 0 0 {name=Ven value=3.3}
+C {devices/vsource.sym} 110 -430 0 0 {name=Vin value=0}
+C {devices/vsource.sym} 470 -620 0 0 {name=Ven value=1.2}
 C {devices/gnd.sym} 470 -570 0 0 {name=l3 lab=GND}
 C {devices/gnd.sym} 110 -390 0 0 {name=l4 lab=GND}
 C {devices/lab_pin.sym} 110 -480 1 0 {name=p1 sig_type=std_logic lab=V_in}
