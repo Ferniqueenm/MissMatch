@@ -1,0 +1,13 @@
+xschem_dir: ../xschem/
+dut_symname: DUTg.sym
+dut_schname: DUTg.sch
+klayout_dir: ../klayout/
+debug: true
+DUT:
+  block_size: 3
+  Wmin: 0.15
+  Wmax: 5.0
+  Wstep: 0.5
+  Lmin: 0.15
+  Lmax: 5.0
+  Lstep: 0.5
