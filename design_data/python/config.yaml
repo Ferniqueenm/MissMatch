@@ -1,13 +1,11 @@
 xschem_dir: ../xschem/
-dut_symname: DUTg.sym
-dut_schname: DUTg.sch
+dut_symname: DUT.sym
+dut_schname: DUT.sch
 klayout_dir: ../klayout/
 debug: true
 DUT:
-  block_size: 3
-  Wmin: 0.15
-  Wmax: 5.0
-  Wstep: 0.5
-  Lmin: 0.15
-  Lmax: 5.0
-  Lstep: 0.5
+  block_size: 2
+  W: ["1.15u", "0.3u", "1u"]
+  L: ["0.15u", "0.25u", "0.5u"]
+  w_tap: 0.78e-6
+  l_tap: 0.78e-6
