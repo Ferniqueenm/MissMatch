@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "array_rows": 4,
+    "array_cols": 4,
+    "has_dummies": true,
+    "pitch_x": 3.13,
+    "pitch_y": 3.46,
+    "timestamp": "2025-08-07T20:20:10.855276"
+  },
+  "pattern_data": {
+    "3,0": {
+      "offset_y": 0.02,
+      "h_length": 0,
+      "v_length": 3.1,
+      "goes_up": true
+    },
+    "3,1": {
+      "offset_y": 0.02,
+      "h_length": 0,
+      "v_length": 3.1,
+      "goes_up": true
+    },
+    "3,2": {
+      "offset_y": 0.02,
+      "h_length": 0,
+      "v_length": 3.1,
+      "goes_up": true
+    },
+    "3,3": {
+      "offset_y": 0.02,
+      "h_length": 0,
+      "v_length": 3.1,
+      "goes_up": true
+    }
+  }
+}

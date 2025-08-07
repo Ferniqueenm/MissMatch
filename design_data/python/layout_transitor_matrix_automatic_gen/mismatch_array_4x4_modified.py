@@ -300,7 +300,7 @@ class MismatchArray4x4:
         print(f"✓ Created shared guardring grid: {cols+1} x {rows+1} stripes")
     
     def create_array_with_shared_guardrings(self, transistor_type='nmos'):
-        """Create complete array with shared guardrings"""
+        """Create complete array with shared guardrings - FIXED PMOS CENTERING"""
         print(f"\n{'='*60}")
         print(f"Creating {transistor_type.upper()} array {ARRAY_SIZE}x{ARRAY_SIZE}")
         print(f"{'='*60}")
@@ -310,6 +310,13 @@ class MismatchArray4x4:
         transistor_pcell = self.create_transistor_pcell(transistor_type)
         transistor_cell = self.layout.cell(transistor_pcell)
         t_bbox = transistor_cell.bbox()
+        
+        # Debug: verificar tamaño real del transistor
+        actual_width = t_bbox.width() * self.layout.dbu
+        actual_height = t_bbox.height() * self.layout.dbu
+        print(f"\nDEBUG - Transistor {transistor_type} bbox:")
+        print(f"  Width: {actual_width:.3f} µm (expected: {TRANSISTOR_W} µm)")
+        print(f"  Height: {actual_height:.3f} µm")
         
         total_cols = ARRAY_SIZE + 2  # Add dummy columns
         total_rows = ARRAY_SIZE
@@ -324,11 +331,32 @@ class MismatchArray4x4:
         for row in range(total_rows):
             row_info = []
             for col in range(total_cols):
+                # FIXED: Calcular el centro de la celda considerando el tamaño real del transistor
+                # El centro de la celda debe ser el centro del espacio disponible dentro del guardring
+                
+                # Centro geométrico del espacio disponible
                 cell_center_x = col * geom['pitch_x'] + geom['gr_width'] + geom['cell_inner_width'] // 2
                 cell_center_y = row * geom['pitch_y'] + geom['gr_width'] + geom['cell_inner_height'] // 2
                 
-                trans = db.Trans(db.Point(cell_center_x - t_bbox.width()//2, 
-                                        cell_center_y - t_bbox.height()//2))
+                # IMPORTANTE: Para PMOS, verificar si hay un offset adicional en el bbox
+                # Algunos PDKs tienen offsets diferentes para NMOS vs PMOS
+                
+                # Calcular la posición de inserción considerando el centro del bbox del transistor
+                bbox_center_x = t_bbox.center().x
+                bbox_center_y = t_bbox.center().y
+                
+                # La transformación debe compensar cualquier offset en el bbox
+                trans_x = cell_center_x - bbox_center_x
+                trans_y = cell_center_y - bbox_center_y
+                
+                # Debug para el primer transistor de cada tipo
+                if row == 0 and col == 0:
+                    print(f"\nDEBUG - Posicionamiento {transistor_type} [0,0]:")
+                    print(f"  Cell center: ({cell_center_x * self.layout.dbu:.3f}, {cell_center_y * self.layout.dbu:.3f}) µm")
+                    print(f"  BBox center: ({bbox_center_x * self.layout.dbu:.3f}, {bbox_center_y * self.layout.dbu:.3f}) µm")
+                    print(f"  Translation: ({trans_x * self.layout.dbu:.3f}, {trans_y * self.layout.dbu:.3f}) µm")
+                
+                trans = db.Trans(db.Point(trans_x, trans_y))
                 array_cell.insert(db.CellInstArray(transistor_pcell, trans))
                 
                 is_dummy = (col == 0 or col == total_cols - 1)
@@ -338,8 +366,8 @@ class MismatchArray4x4:
                     'col': col,
                     'active_row': row,
                     'active_col': col - 1 if not is_dummy else -1,
-                    'x': cell_center_x,
-                    'y': cell_center_y,
+                    'x': cell_center_x,  # Centro real de la celda
+                    'y': cell_center_y,  # Centro real de la celda
                     'is_dummy': is_dummy,
                     'gate_x': cell_center_x * self.layout.dbu,  # Convert to µm
                     'gate_y': cell_center_y * self.layout.dbu   # Convert to µm
@@ -359,8 +387,16 @@ class MismatchArray4x4:
         
         print(f"✓ Placed {active_count} active + {dummy_count} dummy transistors")
         
+        # Verificar alineación
+        if len(transistor_info) > 0:
+            first_t = transistor_info[0]
+            print(f"\nVerificación de alineación:")
+            print(f"  Primer transistor en ({first_t['x'] * self.layout.dbu:.3f}, {first_t['y'] * self.layout.dbu:.3f}) µm")
+            print(f"  Pitch X: {geom['pitch_x'] * self.layout.dbu:.3f} µm")
+            print(f"  Pitch Y: {geom['pitch_y'] * self.layout.dbu:.3f} µm")
+        
         return array_cell, transistor_info, geom
-    
+
     def route_gate_connections(self, array_cell, transistor_info, transistor_type):
         """Route gate connections with pattern from GUI - FIXED VERSION"""
         print(f"\nRouting gate connections for {transistor_type}...")

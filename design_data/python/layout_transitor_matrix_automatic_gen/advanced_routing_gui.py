@@ -202,6 +202,9 @@ class AdvancedRoutingGUI:
         
         # Modo de edición
         self.edit_mode = 'draw'  # 'draw', 'delete', 'move'
+
+        # Auto clone-mode 
+        self.auto_clone_enabled = True
         
         # Colores
         self.colors = {
@@ -290,6 +293,11 @@ Tips:
         self.dummies_var = tk.BooleanVar(value=self.has_dummies)
         ttk.Checkbutton(toolbar, text="Side Dummies", variable=self.dummies_var,
                        command=self.update_array).pack(side=tk.LEFT, padx=10)
+        
+        self.auto_clone_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(toolbar, text="Auto-Clone Patterns", variable=self.auto_clone_var,
+                        command=self.toggle_auto_clone).pack(side=tk.LEFT, padx=10)
+    
         
         # Separador
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill='y', padx=10)
@@ -748,7 +756,7 @@ Tips:
         self.coord_label.config(text=f"X: {x_um:.2f} µm\nY: {y_um:.2f} µm\n{mode_text}")
     
     def on_mouse_up(self, event):
-        """Confirma el ruteo Manhattan"""
+        """Confirm Manhattan routing and apply cloning if column 0"""
         if not self.drawing or not self.selected_transistor:
             return
         
@@ -756,18 +764,18 @@ Tips:
         self.canvas.delete("preview")
         
         if self.manhattan_router:
-            # Agregar punto final
+            # Add final point
             x = self.canvas.canvasx(event.x)
             y = self.canvas.canvasy(event.y)
             x_um, y_um = self.canvas_to_um(x, y)
             
             self.manhattan_router.add_point(x_um, y_um)
             
-            # Obtener todos los segmentos
+            # Get all segments
             segments = self.manhattan_router.finish_route()
             
             if segments:
-                # Convertir a formato de la GUI
+                # Convert to GUI format
                 t_key = (self.selected_transistor['row'], self.selected_transistor['col'])
                 
                 for seg in segments:
@@ -786,20 +794,66 @@ Tips:
                     self.draw_segment(segment_data)
                 
                 self.selected_transistor['routed'] = True
+                
+                # FIXED: Auto-clone if it's column 0 (considering dummies)
+                active_col = self.selected_transistor['active_col']
+                if active_col == 0 and self.auto_clone_enabled:
+                    # Pass the actual row/col coordinates, not active ones
+                    self.clone_pattern_to_row(
+                        self.selected_transistor['row'],
+                        self.selected_transistor['col']
+                    )
             
-            # Limpiar
+            # Cleanup
             self.manhattan_router = None
         
-        # Restaurar color del gate
+        # Restore gate color
         if self.selected_transistor:
             gate_tag = f"gate_{self.selected_transistor['row']}_{self.selected_transistor['col']}"
             self.canvas.itemconfig(gate_tag, fill=self.colors['gate'])
         
         self.selected_transistor = None
         self.update_stats()
-    
+
+
     def on_right_click(self, event):
         """Manejo del click derecho - eliminar última ruta"""
+        # Si estamos dibujando, cancelar
+        if self.drawing:
+            self.drawing = False
+            self.canvas.delete("preview")
+                
+            if self.manhattan_router:
+                self.manhattan_router = None
+                
+            if self.selected_transistor:
+                gate_tag = f"gate_{self.selected_transistor['row']}_{self.selected_transistor['col']}"
+                self.canvas.itemconfig(gate_tag, fill=self.colors['gate'])
+                self.selected_transistor = None
+                
+            return
+            
+        # Si no estamos dibujando, eliminar última ruta
+        if self.routing_segments:
+            last_transistor = None
+            for segment in reversed(self.routing_segments):
+                if segment['transistor'] != last_transistor:
+                    last_transistor = segment['transistor']
+                    break
+                
+                if last_transistor:
+                    self.routing_segments = [s for s in self.routing_segments 
+                                        if s['transistor'] != last_transistor]
+                    
+                    row, col = last_transistor
+                    if last_transistor in self.transistors:
+                        self.transistors[last_transistor]['routed'] = False
+                    
+                self.draw_canvas()
+                self.update_stats()
+    
+    def on_right_click(self, event):
+        """Manejo del click derecho - eliminar última ruta o mostrar menú"""
         # Si estamos dibujando, cancelar
         if self.drawing:
             self.drawing = False
@@ -815,25 +869,57 @@ Tips:
             
             return
         
-        # Si no estamos dibujando, eliminar última ruta
-        if self.routing_segments:
-            last_transistor = None
-            for segment in reversed(self.routing_segments):
-                if segment['transistor'] != last_transistor:
-                    last_transistor = segment['transistor']
-                    break
-            
-            if last_transistor:
-                self.routing_segments = [s for s in self.routing_segments 
-                                       if s['transistor'] != last_transistor]
+        # Verificar si hay un transistor bajo el cursor
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        x_um, y_um = self.canvas_to_um(x, y)
+        
+        t = self.find_transistor_at(x_um, y_um)
+        if t and t['routed'] and not t['is_dummy']:
+            # Mostrar menú contextual
+            self.show_context_menu(event, t)
+        else:
+            # Comportamiento original - eliminar última ruta
+            if self.routing_segments:
+                last_transistor = None
+                for segment in reversed(self.routing_segments):
+                    if segment['transistor'] != last_transistor:
+                        last_transistor = segment['transistor']
+                        break
                 
-                row, col = last_transistor
-                if last_transistor in self.transistors:
-                    self.transistors[last_transistor]['routed'] = False
-                
-                self.draw_canvas()
-                self.update_stats()
-    
+                if last_transistor:
+                    self.routing_segments = [s for s in self.routing_segments 
+                                        if s['transistor'] != last_transistor]
+                    
+                    row, col = last_transistor
+                    if last_transistor in self.transistors:
+                        self.transistors[last_transistor]['routed'] = False
+                    
+                    self.draw_canvas()
+                    self.update_stats()
+
+    def show_context_menu(self, event, transistor):
+        """Show context menu for transistor operations"""
+        menu = tk.Menu(self.root, tearoff=0)
+        
+        # Use actual row/col for the menu operation
+        row = transistor['row']
+        col = transistor['col']
+        active_row = transistor['active_row']
+        active_col = transistor['active_col']
+        
+        menu.add_command(
+            label=f"Clone pattern from [{active_row},{active_col}] to rest of row", 
+            command=lambda: self.clone_pattern_to_row(row, col)
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="Delete this route", 
+            command=lambda: self.delete_transistor_route(transistor)
+        )
+        
+        menu.post(event.x_root, event.y_root)
+
     def on_mouse_move(self, event):
         """Actualiza las coordenadas del mouse"""
         x = self.canvas.canvasx(event.x)
@@ -883,6 +969,16 @@ Tips:
         self.zoom_level = min(zoom_x, zoom_y)
         self.zoom_label.config(text=f"{self.zoom_level:.0f}x")
         self.draw_canvas()
+
+    def delete_transistor_route(self, transistor):
+        """Delete all routing segments for a specific transistor"""
+        t_key = (transistor['row'], transistor['col'])
+        self.routing_segments = [s for s in self.routing_segments 
+                            if s['transistor'] != t_key]
+        transistor['routed'] = False
+        self.draw_canvas()
+        self.update_stats()
+
     
     def update_array(self):
         """Actualiza el array cuando cambian los parámetros"""
@@ -1117,10 +1213,13 @@ Tips:
         self.report_text.insert(1.0, report)
 
     def generate_pattern_dict(self):
-        """Genera el diccionario de patrones a partir de segmentos Manhattan"""
+        """
+        Generate pattern dictionary from Manhattan segments
+        FIXED: Ensure correct direction mapping for all rows
+        """
         pattern_dict = {}
         
-        # Agrupar segmentos por transistor
+        # Group segments by transistor
         transistor_routes = {}
         for segment in self.routing_segments:
             t_key = segment['transistor']
@@ -1128,7 +1227,7 @@ Tips:
                 transistor_routes[t_key] = []
             transistor_routes[t_key].append(segment)
         
-        # Analizar cada transistor
+        # Analyze each transistor
         for t_key in sorted(transistor_routes.keys()):
             row, col = t_key
             segments = transistor_routes[t_key]
@@ -1138,16 +1237,15 @@ Tips:
             
             t = self.transistors[t_key]
             
-            # Centro del GATE (línea vertical en el medio)
+            # Gate center
             gate_x = t['x'] + self.transistor_width / 2
             gate_y = t['y'] + self.transistor_height / 2
             
-            # Encontrar el segmento más cercano al gate (debería ser el primero)
+            # Find start point (closest to gate)
             min_dist = float('inf')
             start_point = None
             
             for seg in segments:
-                # Verificar distancia del inicio del segmento al gate
                 dist = math.sqrt((seg['x1'] - gate_x)**2 + (seg['y1'] - gate_y)**2)
                 if dist < min_dist:
                     min_dist = dist
@@ -1156,15 +1254,16 @@ Tips:
             if not start_point:
                 continue
             
-            # Offset desde el centro del gate
+            # Offset from gate center
             offset_y = start_point[1] - gate_y
             
-            # Calcular longitudes H y V
+            # Calculate H and V lengths
             h_length = 0
             v_length = 0
             
-            # Encontrar el punto más alejado para determinar dirección
-            max_y = min_y = gate_y
+            # Find the endpoint furthest from gate
+            max_dist = 0
+            end_point = start_point
             
             for seg in segments:
                 if seg['type'] == 'horizontal':
@@ -1172,40 +1271,42 @@ Tips:
                 else:
                     v_length += abs(seg['y2'] - seg['y1'])
                 
-                # Actualizar extremos Y
-                max_y = max(max_y, seg['y1'], seg['y2'])
-                min_y = min(min_y, seg['y1'], seg['y2'])
+                # Check both endpoints
+                for point in [(seg['x1'], seg['y1']), (seg['x2'], seg['y2'])]:
+                    dist = math.sqrt((point[0] - gate_x)**2 + (point[1] - gate_y)**2)
+                    if dist > max_dist:
+                        max_dist = dist
+                        end_point = point
             
-            # Determinar dirección basada en el punto final
-            # Si el extremo está por encima del centro del array, va arriba
-            array_center_y = sum(t['y'] for t in self.transistors.values() if not t['is_dummy']) / sum(1 for t in self.transistors.values() if not t['is_dummy'])
+            # Determine direction for KLayout
+            # FIXED: Use consistent logic with analyze_route_pattern
+            active_row = t['active_row']
+            active_col = t['active_col']
             
-            # El punto más alejado del gate determina la dirección
-            if abs(max_y - gate_y) > abs(min_y - gate_y):
-                final_y = max_y
-            else:
-                final_y = min_y
+            # In GUI canvas coordinates (Y increases downward):
+            # - If end_point Y < gate Y: route goes upward visually
+            # - If end_point Y > gate Y: route goes downward visually
+            goes_up_in_gui = end_point[1] < gate_y
             
-            goes_up = final_y < array_center_y
-            
-            # Coordenadas activas
-            active_row = row
-            active_col = col - 1 if self.has_dummies else col
-            
-            # INVERTIR SOLO LAS COORDENADAS DE FILA para KLayout
-            # En GUI: row 0 = arriba, en KLayout: row 0 = abajo
+            # Map to KLayout coordinates
             klayout_row = (self.array_rows - 1) - active_row
             
-            # NO INVERTIR la dirección goes_up - mantenerla igual
+            # IMPORTANT: Keep the visual direction consistent
+            # What goes "up" in GUI should go "up" in KLayout
             pattern_dict[(klayout_row, active_col)] = {
                 'offset_y': round(offset_y, 2),
                 'h_length': round(h_length, 2),
                 'v_length': round(v_length, 2),
-                'goes_up': goes_up  # Mantener la dirección sin invertir
+                'goes_up': goes_up_in_gui  # Keep GUI visual direction
             }
+            
+            # Debug output
+            direction = "UP" if goes_up_in_gui else "DOWN"
+            print(f"  Pattern for GUI[{active_row},{active_col}] → KL[{klayout_row},{active_col}]: {direction}")
         
         return pattern_dict
-    
+
+
     def copy_pattern_dict(self):
         """Copia el diccionario pattern_data al portapapeles"""
         # Generar el patrón
@@ -1246,6 +1347,290 @@ Tips:
         
         self.report_text.delete(1.0, tk.END)
         self.report_text.insert(1.0, report)
+
+    def toggle_auto_clone(self):
+        """Toggle auto-cloning feature"""
+        self.auto_clone_enabled = self.auto_clone_var.get()
+        if self.auto_clone_enabled:
+            self.report_text.insert(tk.END, "\n✓ Auto-cloning ENABLED - Patterns in column 0 will be cloned to other columns\n")
+        else:
+            self.report_text.insert(tk.END, "\n✗ Auto-cloning DISABLED\n")
+
+
+    def clone_pattern_to_row(self, source_row, source_col):
+        """
+        Clone the pattern from source transistor to all other transistors in the same row
+        """
+        if not self.auto_clone_enabled:
+            return
+        
+        # Get source pattern using actual coordinates
+        source_segments = []
+        source_key = (source_row, source_col)
+        
+        for segment in self.routing_segments:
+            if segment['transistor'] == source_key:
+                source_segments.append(segment)
+        
+        if not source_segments:
+            print(f"No segments found for source [{source_row},{source_col}]")
+            return
+        
+        print(f"\nCloning pattern from transistor [{source_row},{source_col}]")
+        
+        # Analyze the source pattern
+        source_info = self.analyze_route_pattern(source_segments)
+        if not source_info:
+            return
+        
+        # Get the source transistor's active coordinates
+        source_t = self.transistors[(source_row, source_col)]
+        source_active_row = source_t['active_row']
+        
+        # Clone to other columns in the same row
+        cloned_count = 0
+        
+        # Iterate through all transistors to find those in the same active row
+        for t_key, t_info in self.transistors.items():
+            # Skip if it's not in the same active row
+            if t_info['active_row'] != source_active_row:
+                continue
+            
+            # Skip the source transistor itself
+            if t_key == source_key:
+                continue
+            
+            # Skip dummy transistors
+            if t_info['is_dummy']:
+                continue
+            
+            # Skip if already routed
+            if any(s['transistor'] == t_key for s in self.routing_segments):
+                print(f"  Skipping [{t_key[0]},{t_key[1]}] - already routed")
+                continue
+            
+            # Clone the pattern
+            print(f"  Cloning to [{t_key[0]},{t_key[1]}] (active: [{t_info['active_row']},{t_info['active_col']}])")
+            self.create_cloned_route(t_key, source_info, t_info['active_col'])
+            cloned_count += 1
+        
+        if cloned_count > 0:
+            self.draw_canvas()
+            self.update_stats()
+            self.report_text.insert(tk.END, 
+                f"✓ Cloned pattern to {cloned_count} transistors in row {source_active_row}\n")
+            print(f"✓ Successfully cloned to {cloned_count} transistors")
+        else:
+            print("  No transistors to clone to")
+
+
+    def analyze_route_pattern(self, segments):
+        """
+        Analyze a route pattern to extract key characteristics
+        FIXED: Correct direction determination for row 0
+        """
+        if not segments:
+            return None
+        
+        # Find start and end points
+        all_points = []
+        for seg in segments:
+            all_points.append((seg['x1'], seg['y1']))
+            all_points.append((seg['x2'], seg['y2']))
+        
+        # Get transistor gate position
+        t = self.transistors[segments[0]['transistor']]
+        gate_x = t['x'] + self.transistor_width / 2
+        gate_y = t['y'] + self.transistor_height / 2
+        
+        # Find the start point (closest to gate)
+        min_dist = float('inf')
+        start_point = None
+        for p in all_points:
+            dist = math.sqrt((p[0] - gate_x)**2 + (p[1] - gate_y)**2)
+            if dist < min_dist:
+                min_dist = dist
+                start_point = p
+        
+        # Calculate offset from gate
+        offset_y = start_point[1] - gate_y
+        
+        # Calculate total lengths
+        h_length = 0
+        v_length = 0
+        
+        for seg in segments:
+            if seg['type'] == 'horizontal':
+                h_length += abs(seg['x2'] - seg['x1'])
+            else:
+                v_length += abs(seg['y2'] - seg['y1'])
+        
+        # Find the final endpoint of the route
+        # This is crucial for determining direction
+        final_point = None
+        max_dist = 0
+        for p in all_points:
+            dist = math.sqrt((p[0] - gate_x)**2 + (p[1] - gate_y)**2)
+            if dist > max_dist:
+                max_dist = dist
+                final_point = p
+        
+        if final_point is None:
+            final_point = start_point
+        
+        # FIXED: Determine direction based on active row position
+        # For GUI canvas coordinates: Y increases downward
+        active_row = t['active_row']
+        
+        # Determine if route goes up or down in the PATTERN SPACE
+        # This will be interpreted correctly by both GUI and KLayout
+        if active_row < self.array_rows / 2:
+            # Upper half (rows 0, 1 for 4x4) - routes should exit upward
+            # In canvas coordinates, "up" means smaller Y values
+            goes_up = final_point[1] < gate_y
+        else:
+            # Lower half (rows 2, 3 for 4x4) - routes should exit downward  
+            # In canvas coordinates, "down" means larger Y values
+            goes_up = final_point[1] < gate_y
+        
+        # Special handling for row boundaries
+        # If the route clearly goes in one direction, respect that
+        y_diff = final_point[1] - gate_y
+        if abs(y_diff) > 0.5:  # Significant vertical movement
+            # Trust the actual route direction
+            goes_up = y_diff < 0  # Negative diff = going up in canvas
+        
+        print(f"  Pattern analysis for T[{active_row},{t['active_col']}]:")
+        print(f"    Gate Y: {gate_y:.2f}, Final Y: {final_point[1]:.2f}")
+        print(f"    Y difference: {y_diff:.2f}")
+        print(f"    Direction: {'UP' if goes_up else 'DOWN'}")
+        
+        return {
+            'offset_y': offset_y,
+            'h_length': h_length,
+            'v_length': v_length,
+            'goes_up': goes_up,
+            'segments': segments
+        }
+    
+    def create_cloned_route(self, transistor_key, pattern_info, active_col):
+        """
+        Create a cloned route for a transistor based on pattern info
+        FIXED: Correct vertical direction for all rows including row 0
+        """
+        t = self.transistors[transistor_key]
+        gate_x = t['x'] + self.transistor_width / 2
+        gate_y = t['y'] + self.transistor_height / 2
+        
+        # Start point with same offset
+        start_x = gate_x
+        start_y = gate_y + pattern_info['offset_y']
+        
+        # Determine horizontal direction based on active column
+        if active_col >= self.array_cols // 2:
+            # Right half - go right
+            h_direction = 1
+        else:
+            # Left half - go left  
+            h_direction = -1
+        
+        # Create segments
+        segments_to_add = []
+        current_x = start_x
+        current_y = start_y
+        
+        # Horizontal segment (if any)
+        if pattern_info['h_length'] > 0:
+            h_end_x = start_x + pattern_info['h_length'] * h_direction
+            
+            # Store with correct coordinates for the segment
+            segment_data = {
+                'id': len(self.routing_segments) + len(segments_to_add),
+                'transistor': transistor_key,
+                'x1': start_x, 
+                'y1': start_y,
+                'x2': h_end_x, 
+                'y2': start_y,
+                'type': 'horizontal'
+            }
+            segments_to_add.append(segment_data)
+            current_x = h_end_x
+        
+        # Vertical segment (if any)
+        if pattern_info['v_length'] > 0:
+            # FIXED: Correct vertical direction based on pattern
+            # In GUI canvas: Y increases downward
+            # goes_up=True means the route goes upward visually (decreasing Y)
+            if pattern_info['goes_up']:
+                v_end_y = current_y - pattern_info['v_length']  # Decrease Y to go up
+            else:
+                v_end_y = current_y + pattern_info['v_length']  # Increase Y to go down
+            
+            segment_data = {
+                'id': len(self.routing_segments) + len(segments_to_add),
+                'transistor': transistor_key,
+                'x1': current_x, 
+                'y1': current_y,
+                'x2': current_x, 
+                'y2': v_end_y,
+                'type': 'vertical'
+            }
+            segments_to_add.append(segment_data)
+        
+        # Add all segments
+        for seg in segments_to_add:
+            self.routing_segments.append(seg)
+            self.draw_segment(seg)
+        
+        # Mark transistor as routed
+        t['routed'] = True
+        
+        # Debug info
+        active_row = t['active_row']
+        direction = "UP" if pattern_info['goes_up'] else "DOWN"
+        print(f"    Created route for T[{active_row},{active_col}]: dir={direction}, v_len={pattern_info['v_length']:.2f}")
+
+
+
+    def debug_routing_info(self):
+        """Print debug information about current routing state"""
+        print("\n" + "="*50)
+        print("DEBUG: Current Routing State")
+        print("="*50)
+        
+        # Group segments by transistor
+        routes_by_transistor = {}
+        for seg in self.routing_segments:
+            t_key = seg['transistor']
+            if t_key not in routes_by_transistor:
+                routes_by_transistor[t_key] = []
+            routes_by_transistor[t_key].append(seg)
+        
+        print(f"Total routed transistors: {len(routes_by_transistor)}")
+        
+        # Organize by active row
+        by_active_row = {}
+        for t_key in routes_by_transistor:
+            if t_key in self.transistors:
+                t_info = self.transistors[t_key]
+                active_row = t_info['active_row']
+                if active_row not in by_active_row:
+                    by_active_row[active_row] = []
+                by_active_row[active_row].append({
+                    'key': t_key,
+                    'active_col': t_info['active_col'],
+                    'segments': len(routes_by_transistor[t_key])
+                })
+        
+        # Print organized info
+        for row in sorted(by_active_row.keys()):
+            transistors = sorted(by_active_row[row], key=lambda x: x['active_col'])
+            cols_routed = [t['active_col'] for t in transistors]
+            print(f"  Row {row}: Columns {cols_routed} routed")
+            for t in transistors:
+                print(f"    T{t['key']}: {t['segments']} segments")
+        
+        print("="*50)
 
 def main():
     root = tk.Tk()
