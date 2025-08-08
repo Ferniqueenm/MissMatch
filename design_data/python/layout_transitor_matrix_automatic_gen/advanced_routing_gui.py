@@ -168,45 +168,59 @@ class AdvancedRoutingGUI:
         self.root = root
         self.root.title("Advanced Gate Routing Designer - Manhattan Routing")
         
-        # Parámetros del array (en micrómetros)
+        # Array parameters
         self.array_rows = 4
         self.array_cols = 4
         self.has_dummies = True
         
-        # Dimensiones físicas reales (µm) - según PDK IHP SG13G2
-        self.transistor_factor_multiplier = 1 
-        self.transistor_width = 1.03 * self.transistor_factor_multiplier  # µm (en dirección X)
-        self.transistor_height = 1.36 * self.transistor_factor_multiplier   # µm (en dirección Y)
-        self.pitch_x = 3.13 * self.transistor_factor_multiplier           # µm (incluye guardring)
-        self.pitch_y = 3.46  * self.transistor_factor_multiplier          # µm (incluye guardring)
-        self.metal3_width = 0.2        # µm
+        # ====== CONFIGURABLE TRANSISTOR DIMENSIONS (µm) ======
+        # These should match your PDK requirements
+        self.transistor_W = 1.03    # Width (µm) - configurable
+        self.transistor_L = 0.35    # Length (µm) - configurable
         
-        # Parámetros de visualización
-        self.zoom_level = 50.0         # pixels/µm
-        self.grid_spacing = 0.5        # µm
+        # Spacing parameters (µm)
+        self.guardring_width = 0.5   # Guardring width
+        self.guardring_spacing = 2.0  # Distance from transistor to guardring (configurable, default 2µm)
+        
+        # For GUI visualization - transistor appears as a box
+        # The actual transistor dimensions from PDK
+        self.transistor_width = self.transistor_W    # Physical width in X direction
+        self.transistor_height = self.transistor_L * 4  # Approximate height for visualization
+        
+        # Calculate pitch dynamically based on dimensions
+        # Pitch = transistor_dimension + 2*spacing + guardring_width (shared)
+        self.pitch_x = self.transistor_width + 2 * self.guardring_spacing + self.guardring_width
+        self.pitch_y = self.transistor_height + 2 * self.guardring_spacing + self.guardring_width
+        
+        # Metal widths
+        self.metal3_width = 0.2  # µm
+        
+        # Display parameters
+        self.zoom_level = 50.0    # pixels/µm
+        self.grid_spacing = 0.5   # µm
         self.canvas_width = 800
         self.canvas_height = 600
         
-        # Offset del canvas (para pan)
+        # Canvas offset for pan
         self.canvas_offset_x = 50
         self.canvas_offset_y = 50
         
-        # Estado
-        self.transistors = {}  # Dict[tuple(row,col), transistor_info]
-        self.routing_segments = []  # Lista de todos los segmentos
+        # State
+        self.transistors = {}
+        self.routing_segments = []
         self.drawing = False
         self.selected_transistor = None
         self.selected_segment = None
         self.mouse_start = None
-        self.manhattan_router = None  # Para ruteo Manhattan estricto
+        self.manhattan_router = None
         
-        # Modo de edición
-        self.edit_mode = 'draw'  # 'draw', 'delete', 'move'
-
-        # Auto clone-mode 
+        # Edit mode
+        self.edit_mode = 'draw'
+        
+        # Auto clone mode
         self.auto_clone_enabled = True
         
-        # Colores
+        # Colors (unchanged)
         self.colors = {
             'bg': '#f8f8f8',
             'grid': '#e0e0e0',
@@ -228,40 +242,116 @@ class AdvancedRoutingGUI:
         self.create_array()
         self.draw_canvas()
         
-        # Mostrar instrucciones iniciales
-        instructions = """MANHATTAN ROUTING ENABLED - WITH COORDINATE MAPPING
+        # Show configuration in instructions
+        self.show_configuration_info()
+
+    def show_configuration_info(self):
+        """Display current transistor configuration"""
+        instructions = f"""MANHATTAN ROUTING - SCALABLE CONFIGURATION
         
-Instructions:
-1. Click on a transistor gate (red line) to start routing
-2. Drag to create route - alternates H/V automatically
-3. Release to confirm the route
-4. Right-click to cancel current route or delete last route
-5. Use "Copy Pattern Dict" to export for KLayout
+    Current Transistor Configuration:
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    • Transistor Width (W): {self.transistor_W:.2f} µm
+    • Transistor Length (L): {self.transistor_L:.2f} µm
+    • Guardring Spacing: {self.guardring_spacing:.2f} µm
+    • Guardring Width: {self.guardring_width:.2f} µm
+    • Calculated Pitch X: {self.pitch_x:.2f} µm
+    • Calculated Pitch Y: {self.pitch_y:.2f} µm
 
-IMPORTANT - Coordinate System:
-- GUI Display: Row 0 = TOP, Row N = BOTTOM
-- KLayout: Row 0 = BOTTOM, Row N = TOP
-- The pattern export automatically handles this mapping!
-- Each transistor shows both coordinates:
-  * GUI[row,col] = coordinates in this interface
-  * KL[row,col] = coordinates in KLayout
+    Instructions:
+    1. Click on a transistor gate (red line) to start routing
+    2. Drag to create route - alternates H/V automatically
+    3. Release to confirm the route
+    4. Right-click to cancel or delete
+    5. Use "Copy Pattern Dict" to export for KLayout
 
-Routing Rules:
-- Routes are strictly horizontal/vertical (Manhattan)
-- First segment alternates H→V→H→V for each new route
-- Routes snap to 50nm grid
-- Direction is automatically inverted for KLayout
+    Coordinate Mapping:
+    • GUI Display: Row 0 = TOP, Row N = BOTTOM
+    • KLayout: Row 0 = BOTTOM, Row N = TOP
+    • Pattern export handles mapping automatically
 
-Tips:
-- Plan your route path before clicking
-- Avoid crossing other routes
-- Keep routes as short as possible
-- The pattern is automatically converted for KLayout"""
+    Tips:
+    • Routes snap to 50nm grid
+    • Auto-clone enabled by default
+    • Route column 0 first for auto-cloning"""
         
+        self.report_text.delete(1.0, tk.END)
         self.report_text.insert(1.0, instructions)
+  
+    def show_dimension_dialog(self):
+        """Show dialog to configure transistor dimensions"""
+        import tkinter.simpledialog as sd
         
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Configure Transistor Dimensions")
+        dialog.geometry("400x300")
+        
+        # Width input
+        ttk.Label(dialog, text="Transistor Width W (µm):").grid(row=0, column=0, padx=10, pady=5, sticky='e')
+        w_var = tk.DoubleVar(value=self.transistor_W)
+        ttk.Entry(dialog, textvariable=w_var, width=10).grid(row=0, column=1, padx=10, pady=5)
+        
+        # Length input
+        ttk.Label(dialog, text="Transistor Length L (µm):").grid(row=1, column=0, padx=10, pady=5, sticky='e')
+        l_var = tk.DoubleVar(value=self.transistor_L)
+        ttk.Entry(dialog, textvariable=l_var, width=10).grid(row=1, column=1, padx=10, pady=5)
+        
+        # Spacing input
+        ttk.Label(dialog, text="Guardring Spacing (µm):").grid(row=2, column=0, padx=10, pady=5, sticky='e')
+        spacing_var = tk.DoubleVar(value=self.guardring_spacing)
+        ttk.Entry(dialog, textvariable=spacing_var, width=10).grid(row=2, column=1, padx=10, pady=5)
+        
+        # Info display
+        info_label = ttk.Label(dialog, text="", foreground="blue")
+        info_label.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
+        
+        def update_info(*args):
+            """Update calculated pitch display"""
+            try:
+                w = w_var.get()
+                l = l_var.get()
+                spacing = spacing_var.get()
+                pitch_x = w + 2 * spacing + self.guardring_width
+                pitch_y = l * 4 + 2 * spacing + self.guardring_width  # Approximate height
+                info_label.config(text=f"Calculated pitch: X={pitch_x:.2f}µm, Y={pitch_y:.2f}µm")
+            except:
+                pass
+        
+        w_var.trace('w', update_info)
+        l_var.trace('w', update_info)
+        spacing_var.trace('w', update_info)
+        update_info()
+        
+        def apply_dimensions():
+            """Apply new dimensions and recreate array"""
+            self.transistor_W = w_var.get()
+            self.transistor_L = l_var.get()
+            self.guardring_spacing = spacing_var.get()
+            
+            # Recalculate derived parameters
+            self.transistor_width = self.transistor_W
+            self.transistor_height = self.transistor_L * 4
+            self.pitch_x = self.transistor_width + 2 * self.guardring_spacing + self.guardring_width
+            self.pitch_y = self.transistor_height + 2 * self.guardring_spacing + self.guardring_width
+            
+            # Clear and recreate
+            self.routing_segments.clear()
+            self.create_array()
+            self.draw_canvas()
+            self.show_configuration_info()
+            
+            dialog.destroy()
+            
+            messagebox.showinfo("Configuration Updated", 
+                            f"New configuration:\n"
+                            f"W={self.transistor_W:.2f}µm, L={self.transistor_L:.2f}µm\n"
+                            f"Pitch: X={self.pitch_x:.2f}µm, Y={self.pitch_y:.2f}µm")
+        
+        ttk.Button(dialog, text="Apply", command=apply_dimensions).grid(row=4, column=0, padx=10, pady=10)
+        ttk.Button(dialog, text="Cancel", command=dialog.destroy).grid(row=4, column=1, padx=10, pady=10)
+
     def setup_ui(self):
-        """Configura la interfaz de usuario"""
+        """Configure user interface with dimension configuration"""
         # Frame principal
         main_frame = ttk.Frame(self.root, padding="5")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -272,27 +362,33 @@ Tips:
         
         # Manhattan routing indicator
         manhattan_label = ttk.Label(toolbar, text="MANHATTAN ROUTING", 
-                                  font=('Arial', 10, 'bold'), foreground='green')
+                                font=('Arial', 10, 'bold'), foreground='green')
         manhattan_label.pack(side=tk.LEFT, padx=10)
         
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill='y', padx=5)
         
-        # Controles de array
+        # NEW: Configuration button
+        ttk.Button(toolbar, text="⚙ Configure", 
+                command=self.show_dimension_dialog).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill='y', padx=5)
+        
+        # Array controls
         ttk.Label(toolbar, text="Array:").pack(side=tk.LEFT, padx=5)
         
         self.rows_var = tk.IntVar(value=self.array_rows)
         ttk.Spinbox(toolbar, from_=2, to=20, width=5, textvariable=self.rows_var,
-                   command=self.update_array).pack(side=tk.LEFT)
+                command=self.update_array).pack(side=tk.LEFT)
         
         ttk.Label(toolbar, text="x").pack(side=tk.LEFT, padx=2)
         
         self.cols_var = tk.IntVar(value=self.array_cols)
         ttk.Spinbox(toolbar, from_=2, to=20, width=5, textvariable=self.cols_var,
-                   command=self.update_array).pack(side=tk.LEFT)
+                command=self.update_array).pack(side=tk.LEFT)
         
         self.dummies_var = tk.BooleanVar(value=self.has_dummies)
         ttk.Checkbutton(toolbar, text="Side Dummies", variable=self.dummies_var,
-                       command=self.update_array).pack(side=tk.LEFT, padx=10)
+                    command=self.update_array).pack(side=tk.LEFT, padx=10)
         
         self.auto_clone_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(toolbar, text="Auto-Clone Patterns", variable=self.auto_clone_var,
@@ -1029,7 +1125,7 @@ Tips:
         self.stats_label.config(text=f"Segments: {total_segments}\nRouted: {routed}/{total}")
     
     def save_pattern(self):
-        """Guarda el patrón actual en un archivo"""
+        """Save pattern with dimension configuration"""
         filename = filedialog.asksaveasfilename(
             defaultextension=".json",
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
@@ -1037,10 +1133,9 @@ Tips:
         )
         
         if filename:
-            # Generar pattern_data directamente
             pattern_dict = self.generate_pattern_dict()
             
-            # Convertir tuplas a strings para JSON
+            # Convert tuples to strings for JSON
             json_pattern = {}
             for (row, col), data in pattern_dict.items():
                 key = f"{row},{col}"
@@ -1051,6 +1146,11 @@ Tips:
                     'array_rows': self.array_rows,
                     'array_cols': self.array_cols,
                     'has_dummies': self.has_dummies,
+                    # NEW: Include transistor dimensions
+                    'transistor_W': self.transistor_W,
+                    'transistor_L': self.transistor_L,
+                    'guardring_spacing': self.guardring_spacing,
+                    'guardring_width': self.guardring_width,
                     'pitch_x': self.pitch_x,
                     'pitch_y': self.pitch_y,
                     'timestamp': datetime.now().isoformat()
@@ -1061,10 +1161,13 @@ Tips:
             with open(filename, 'w') as f:
                 json.dump(pattern_data, f, indent=2)
             
-            messagebox.showinfo("Save Pattern", f"Pattern saved to {filename}")
+            messagebox.showinfo("Save Pattern", 
+                            f"Pattern saved to {filename}\n"
+                            f"Configuration: W={self.transistor_W}µm, L={self.transistor_L}µm")
+
 
     def load_pattern(self):
-        """Carga un patrón desde archivo"""
+        """Load pattern and apply dimension configuration"""
         filename = filedialog.askopenfilename(
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
         )
@@ -1074,18 +1177,37 @@ Tips:
                 pattern_data = json.load(f)
             
             meta = pattern_data['metadata']
+            
+            # Check if dimensions are included (for compatibility)
+            if 'transistor_W' in meta and 'transistor_L' in meta:
+                # Apply dimensions from file
+                self.transistor_W = meta['transistor_W']
+                self.transistor_L = meta['transistor_L']
+                self.guardring_spacing = meta.get('guardring_spacing', 2.0)
+                self.guardring_width = meta.get('guardring_width', 0.5)
+                
+                # Recalculate derived parameters
+                self.transistor_width = self.transistor_W
+                self.transistor_height = self.transistor_L * 4
+                self.pitch_x = self.transistor_width + 2 * self.guardring_spacing + self.guardring_width
+                self.pitch_y = self.transistor_height + 2 * self.guardring_spacing + self.guardring_width
+                
+                print(f"Loaded configuration: W={self.transistor_W}µm, L={self.transistor_L}µm")
+            
+            # Update array size if different
             if (meta['array_rows'] != self.array_rows or
                 meta['array_cols'] != self.array_cols or
                 meta['has_dummies'] != self.has_dummies):
                 
                 if messagebox.askyesno("Load Pattern", 
-                                     "Pattern was created for a different array size.\n"
-                                     "Do you want to adjust the array to match?"):
+                                    "Pattern was created for a different array size.\n"
+                                    "Do you want to adjust the array to match?"):
                     self.rows_var.set(meta['array_rows'])
                     self.cols_var.set(meta['array_cols'])
                     self.dummies_var.set(meta['has_dummies'])
                     self.update_array()
             
+            # Load routing segments
             self.routing_segments.clear()
             
             for seg_data in pattern_data['segments']:
@@ -1106,8 +1228,11 @@ Tips:
             
             self.draw_canvas()
             self.update_stats()
+            self.show_configuration_info()
             
-            messagebox.showinfo("Load Pattern", f"Pattern loaded from {filename}")
+            messagebox.showinfo("Load Pattern", 
+                          f"Pattern loaded from {filename}\n"
+                          f"Configuration: W={self.transistor_W}µm, L={self.transistor_L}µm")
     
     def generate_report(self):
         """Genera el reporte del patrón con mapeo de coordenadas"""

@@ -1,4 +1,4 @@
-02/08/2025
+07/08/2025
 
 status: los transisotres dibujados y ruteados en la gui coinciden con el resultado generado por klayout. Tenemos el modo para clonar el ruteo al resto de las columnas fila por fila basados en el ruteo de los elementos de la primera columna
 
