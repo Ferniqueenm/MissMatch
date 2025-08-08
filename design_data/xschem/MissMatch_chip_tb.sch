@@ -344,5 +344,5 @@ size=80u
 shape=0
 padtype=0
 }
-C {DUT.sym} 1910 -920 0 0 {name=x14}
 C {devices/lab_pin.sym} 1890 -960 0 0 {name=p20 sig_type=std_logic lab=Bulk}
+C {DUT.sym} 1910 -920 0 0 {name=x14}
