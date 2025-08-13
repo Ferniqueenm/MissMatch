@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SCALABLE MISMATCH ARRAY GENERATOR - NMOS ONLY
-Modified version with configurable dimensions and PMOS disabled
+SCALABLE MISMATCH ARRAY GENERATOR - NMOS AND PMOS SUPPORT
+Modified version with configurable dimensions and full PMOS support
 """
 
 import pya
@@ -40,48 +40,48 @@ LIB_NAME = 'SG13_dev'
 
 # Layers
 LAYER_MAP = {
-    'Activ':    (1, 0),
-    'GatPoly':  (5, 0),
-    'Cont':     (6, 0),
-    'nSD':      (7, 0),
-    'Metal1':   (8, 0),
-    'Metal2':   (10, 0),
-    'Metal3':   (30, 0),
-    'pSD':      (14, 0),
-    'Via1':     (19, 0),
-    'Via2':     (29, 0),
-    'NWell':    (31, 0),
-    'Ptap':     (32, 0),
-    'Ntap':     (33, 0),  
-    'TEXT':     (63, 0),
+    'Activ':    (1, 0),   # Active area
+    'GatPoly':  (5, 0),   # Gate poly
+    'Cont':     (6, 0),   # Contact (not "locint" as in IHP script)
+    'nSD':      (7, 0),   # N+ implant
+    'Metal1':   (8, 0),   # Metal 1
+    'Metal2':   (10, 0),  # Metal 2
+    'Metal3':   (30, 0),  # Metal 3
+    'pSD':      (14, 0),  # P+ implant
+    'Via1':     (19, 0),  # Via 1
+    'Via2':     (29, 0),  # Via 2
+    'NWell':    (31, 0),  # N-well
+    # Ptap and Ntap are NOT used by IHP for guard rings!
+    # 'Ptap':     (32, 0),  # Not used
+    # 'Ntap':     (33, 0),  # Not used
+    'TEXT':     (63, 0),  # Text layer
 }
 
+def get_default_pattern():
+    """Return default pattern if no pattern file is found"""
+    return {}
+
 def load_pattern_and_config():
-    """Load pattern and extract configuration if available"""
+    """Load pattern and extract configuration if available - Phase 2 & 3 version"""
     global TRANSISTOR_W, TRANSISTOR_L, GUARDRING_SPACING, ARRAY_SIZE
     
-    # Try to load pattern file
-    pattern_data = None
-    config = {}
+    # Initialize return data
+    full_data = {
+        'pattern_data': {},
+        'metadata': {}
+    }
     
-    # Check for pattern file
-    if 'pattern_file' in globals():
-        try:
-            with open(pattern_file, 'r') as f:
-                data = json.load(f)
-                pattern_data = data.get('pattern_data', {})
-                config = data.get('metadata', {})
-        except Exception as e:
-            print(f"⚠ Error loading pattern file: {e}")
-    else:
-        # Try temp_pattern.json
-        try:
-            with open('temp_pattern.json', 'r') as f:
-                data = json.load(f)
-                pattern_data = data.get('pattern_data', {})
-                config = data.get('metadata', {})
-        except:
-            pass
+    # Try to load pattern file
+    try:
+        with open('temp_pattern.json', 'r') as f:
+            data = json.load(f)
+            full_data = data
+            print(f"✓ Loaded temp_pattern.json")
+    except Exception as e:
+        print(f"⚠ Could not load temp_pattern.json: {e}")
+    
+    # Extract config from metadata
+    config = full_data.get('metadata', {})
     
     # Apply configuration if available
     if config:
@@ -100,8 +100,21 @@ def load_pattern_and_config():
         if 'array_rows' in config:
             ARRAY_SIZE = config['array_rows']
             print(f"✓ Loaded array_size={ARRAY_SIZE}x{ARRAY_SIZE} from pattern file")
+        
+        # Phase 2: Handle dummy mode
+        if 'dummy_mode' in config:
+            print(f"✓ Dummy mode: {config['dummy_mode']}")
+        elif 'has_dummies' in config:
+            # Backward compatibility
+            dummy_mode = 'sides' if config['has_dummies'] else 'none'
+            config['dummy_mode'] = dummy_mode
+            print(f"✓ Converted has_dummies to dummy_mode: {dummy_mode}")
+        
+        if 'device_type' in config:
+            print(f"✓ Device type: {config['device_type']}")
     
     # Convert pattern keys from strings to tuples
+    pattern_data = full_data.get('pattern_data', {})
     if pattern_data:
         pattern = {}
         for str_key, value in pattern_data.items():
@@ -110,13 +123,12 @@ def load_pattern_and_config():
                 pattern[(row, col)] = value
             else:
                 pattern[str_key] = value
-        return pattern
+        full_data['pattern_data'] = pattern
     
-    # Return default pattern if nothing loaded
-    return get_default_pattern()
+    return full_data
 
 class ScalableMismatchArray:
-    """Scalable mismatch array generator - NMOS only"""
+    """Scalable mismatch array generator - NMOS and PMOS support"""
     
     def __init__(self):
         print("\n" + "="*60)
@@ -124,14 +136,18 @@ class ScalableMismatchArray:
         print("="*60)
         
         # Load configuration and pattern
-        self.pattern_data = load_pattern_and_config()
+        self.full_data = load_pattern_and_config()
+        self.pattern_data = self.full_data.get('pattern_data', {})
+        self.metadata = self.full_data.get('metadata', {})
+        self.device_type = self.metadata.get('device_type', 'nmos')
+        self.dummy_mode = self.metadata.get('dummy_mode', 'sides')
         
         # Display current configuration
         print(f"\nConfiguration:")
+        print(f"  Device Type: {self.device_type}")
+        print(f"  Dummy Mode: {self.dummy_mode}")
         print(f"  Transistor W: {TRANSISTOR_W} µm")
         print(f"  Transistor L: {TRANSISTOR_L} µm")
-        print(f"  Guardring spacing: {GUARDRING_SPACING} µm")
-        print(f"  Guardring width: {GUARDRING_WIDTH} µm")
         print(f"  Array size: {ARRAY_SIZE}x{ARRAY_SIZE}")
         
         # Calculate pitches
@@ -145,7 +161,16 @@ class ScalableMismatchArray:
         # Create layout
         self.layout = db.Layout(True)
         self.layout.dbu = 0.001  # 1nm
-        self.top_cell = self.layout.create_cell(f'MismatchArray_{ARRAY_SIZE}x{ARRAY_SIZE}_NMOS')
+        
+        # Create top cell with appropriate name
+        if self.device_type == 'both':
+            cell_name = f'MismatchArray_{ARRAY_SIZE}x{ARRAY_SIZE}_BOTH'
+        elif self.device_type == 'pmos':
+            cell_name = f'MismatchArray_{ARRAY_SIZE}x{ARRAY_SIZE}_PMOS'
+        else:
+            cell_name = f'MismatchArray_{ARRAY_SIZE}x{ARRAY_SIZE}_NMOS'
+        
+        self.top_cell = self.layout.create_cell(cell_name)
         
         # Create layer indices
         self.layers = {}
@@ -181,14 +206,19 @@ class ScalableMismatchArray:
         """Convert µm to database units"""
         return int(value_um / self.layout.dbu)
     
-    def create_transistor_pcell(self):
-        """Create NMOS transistor PCell"""
-        pcell_name = 'nmos'
+    def create_transistor_pcell(self, transistor_type='nmos'):
+        """Create transistor PCell - FIXED to accept type parameter"""
+        pcell_name = transistor_type
         
         # Find PCell declaration
         pcell_decl = self.lib.layout().pcell_declaration(pcell_name)
         if not pcell_decl:
             print(f"\n⚠ PCell '{pcell_name}' not found")
+            print("Available PCells in library:")
+            for i in range(self.lib.layout().pcells()):
+                pd = self.lib.layout().pcell_declaration(i)
+                if pd:
+                    print(f"  - {pd.name()}")
             raise Exception(f"PCell {pcell_name} not found in library {LIB_NAME}")
         
         # Parameters for PCell
@@ -242,66 +272,193 @@ class ScalableMismatchArray:
         }
     
     def create_shared_guardring_structure(self, array_cell, geom, rows, cols):
-        """Create shared guardring structure for NMOS array"""
-        print("\nCreating shared guardring structure...")
+        """
+        Create shared guardring structure for NMOS array
+        CORRECTED based on official IHP implementation:
+        - Uses pSD (NO Ptap)
+        - Uses Activ
+        - Uses Cont
+        - Uses Metal1
+        - NO NWell for substrate contact
+        """
+        print("\nCreating shared guardring structure for NMOS (IHP-compliant)...")
         
         gr_width = geom['gr_width']
+        
+        # For NMOS array: p-type substrate contact
+        # Based on IHP script: uses pSD + Activ (NO Ptap!)
         
         # Create vertical guardring stripes
         for col in range(cols + 1):
             x = col * geom['pitch_x']
-            stripe = db.Box(
+            stripe_box = db.Box(
                 x, 0,
                 x + gr_width, geom['total_height']
             )
-            array_cell.shapes(self.layers['Activ']).insert(stripe)
-            array_cell.shapes(self.layers['pSD']).insert(stripe)
-            array_cell.shapes(self.layers['Ptap']).insert(stripe)
+            
+            # Active area (required for guard ring)
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            
+            # P+ implant for substrate contact (pSD layer)
+            array_cell.shapes(self.layers['pSD']).insert(stripe_box)
+            
+            # NO Ptap layer - IHP doesn't use it!
+            # NO NWell - substrate contacts don't need it
         
         # Create horizontal guardring stripes
         for row in range(rows + 1):
             y = row * geom['pitch_y']
-            stripe = db.Box(
+            stripe_box = db.Box(
                 0, y,
                 geom['total_width'], y + gr_width
             )
-            array_cell.shapes(self.layers['Activ']).insert(stripe)
-            array_cell.shapes(self.layers['pSD']).insert(stripe)
-            array_cell.shapes(self.layers['Ptap']).insert(stripe)
+            
+            # Active area
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            
+            # P+ implant for substrate contact
+            array_cell.shapes(self.layers['pSD']).insert(stripe_box)
+            
+            # NO Ptap layer - IHP doesn't use it!
         
         # Add contacts to guardring intersections
         cont_size = self.dbu(CONT_SIZE)
+        m1_enc = self.dbu(0.05)  # Metal1 enclosure of contact
+        
         for row in range(rows + 1):
             for col in range(cols + 1):
-                x = col * geom['pitch_x'] + gr_width // 2
-                y = row * geom['pitch_y'] + gr_width // 2
+                # Center of guardring intersection
+                x_center = col * geom['pitch_x'] + gr_width // 2
+                y_center = row * geom['pitch_y'] + gr_width // 2
                 
+                # Contact (Cont layer)
                 cont_box = db.Box(
-                    x - cont_size//2, y - cont_size//2,
-                    x + cont_size//2, y + cont_size//2
+                    x_center - cont_size//2, 
+                    y_center - cont_size//2,
+                    x_center + cont_size//2, 
+                    y_center + cont_size//2
                 )
                 array_cell.shapes(self.layers['Cont']).insert(cont_box)
                 
-                m1_box = cont_box.enlarged(self.dbu(0.05))
+                # Metal1 over contact (with enclosure)
+                m1_box = db.Box(
+                    x_center - cont_size//2 - m1_enc,
+                    y_center - cont_size//2 - m1_enc,
+                    x_center + cont_size//2 + m1_enc,
+                    y_center + cont_size//2 + m1_enc
+                )
                 array_cell.shapes(self.layers['Metal1']).insert(m1_box)
         
-        print(f"✓ Created shared guardring grid: {cols+1} x {rows+1} stripes")
-    
+        print(f"✓ Created substrate contact guardring: {cols+1} x {rows+1} stripes")
+        print(f"  Layers used: Activ, pSD, Cont, Metal1")
+
+
+    def create_shared_guardring_structure_pmos(self, array_cell, geom, rows, cols):
+        """
+        Create N-well guardring for PMOS - CORRECT IHP IMPLEMENTATION
+        Uses: NWell + Activ + nSD + Cont + Metal1 (NO Ntap!)
+        """
+        print("\nCreating N-well guardring structure for PMOS (IHP-compliant)...")
+        
+        gr_width = geom['gr_width']
+        
+        # First create N-well for entire PMOS array
+        nwell_margin = self.dbu(0.5)
+        nwell_box = db.Box(
+            -nwell_margin, 
+            -nwell_margin,
+            geom['total_width'] + nwell_margin,
+            geom['total_height'] + nwell_margin
+        )
+        array_cell.shapes(self.layers['NWell']).insert(nwell_box)
+        
+        # Create guardring stripes (N-well contact)
+        for col in range(cols + 1):
+            x = col * geom['pitch_x']
+            stripe_box = db.Box(
+                x, 0,
+                x + gr_width, geom['total_height']
+            )
+            
+            # Active area
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            
+            # N+ implant for N-well contact (nSD layer)
+            array_cell.shapes(self.layers['nSD']).insert(stripe_box)
+            
+            # NO Ntap layer - IHP doesn't use it!
+        
+        # Horizontal stripes
+        for row in range(rows + 1):
+            y = row * geom['pitch_y']
+            stripe_box = db.Box(
+                0, y,
+                geom['total_width'], y + gr_width
+            )
+            
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            array_cell.shapes(self.layers['nSD']).insert(stripe_box)
+        
+        # Add contacts (same as NMOS)
+        cont_size = self.dbu(CONT_SIZE)
+        m1_enc = self.dbu(0.05)
+        
+        for row in range(rows + 1):
+            for col in range(cols + 1):
+                x_center = col * geom['pitch_x'] + gr_width // 2
+                y_center = row * geom['pitch_y'] + gr_width // 2
+                
+                cont_box = db.Box(
+                    x_center - cont_size//2, 
+                    y_center - cont_size//2,
+                    x_center + cont_size//2, 
+                    y_center + cont_size//2
+                )
+                array_cell.shapes(self.layers['Cont']).insert(cont_box)
+                
+                m1_box = db.Box(
+                    x_center - cont_size//2 - m1_enc,
+                    y_center - cont_size//2 - m1_enc,
+                    x_center + cont_size//2 + m1_enc,
+                    y_center + cont_size//2 + m1_enc
+                )
+                array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+        
+        print(f"✓ Created N-well contact guardring: {cols+1} x {rows+1} stripes")
+        print(f"  Layers used: NWell, Activ, nSD, Cont, Metal1")
+
+
     def create_nmos_array(self):
-        """Create NMOS array with proper centering"""
+        """Create NMOS array with configurable dummy arrangement - Phase 2"""
         print(f"\n{'='*60}")
         print(f"Creating NMOS array {ARRAY_SIZE}x{ARRAY_SIZE}")
         print(f"{'='*60}")
         
         array_cell = self.layout.create_cell(f'nmos_array_{ARRAY_SIZE}x{ARRAY_SIZE}')
         
+        # Get dummy mode from metadata
+        dummy_mode = self.metadata.get('dummy_mode', 'sides')
+        print(f"  Dummy mode: {dummy_mode}")
+        
+        # Calculate total dimensions based on dummy mode
+        if dummy_mode == 'none':
+            total_rows = ARRAY_SIZE
+            total_cols = ARRAY_SIZE
+        elif dummy_mode == 'sides':
+            total_rows = ARRAY_SIZE
+            total_cols = ARRAY_SIZE + 2
+        else:  # full ring
+            total_rows = ARRAY_SIZE + 2
+            total_cols = ARRAY_SIZE + 2
+        
+        print(f"  Total array dimensions: {total_rows}x{total_cols}")
+        print(f"  Active array: {ARRAY_SIZE}x{ARRAY_SIZE}")
+        
         # Create transistor PCell
-        transistor_pcell = self.create_transistor_pcell()
+        transistor_pcell = self.create_transistor_pcell('nmos')
         transistor_cell = self.layout.cell(transistor_pcell)
         t_bbox = transistor_cell.bbox()
         
-        total_cols = ARRAY_SIZE + 2  # Add dummy columns
-        total_rows = ARRAY_SIZE
         geom = self.calculate_shared_guardring_array(t_bbox, total_rows, total_cols)
         
         # Create guardring structure
@@ -314,12 +471,20 @@ class ScalableMismatchArray:
         
         for row in range(total_rows):
             for col in range(total_cols):
-                # Calculate center of available space within guardring
-                # The transistor should be centered with GUARDRING_SPACING on all sides
+                # Determine if dummy based on mode
+                is_dummy = False
+                
+                if dummy_mode == 'sides':
+                    is_dummy = (col == 0 or col == total_cols-1)
+                elif dummy_mode == 'full':
+                    is_dummy = (row == 0 or row == total_rows-1 or 
+                            col == 0 or col == total_cols-1)
+                
+                # Calculate center position
                 cell_center_x = col * geom['pitch_x'] + geom['gr_width'] + geom['cell_inner_width'] // 2
                 cell_center_y = row * geom['pitch_y'] + geom['gr_width'] + geom['cell_inner_height'] // 2
                 
-                # Position transistor centered in the cell
+                # Position transistor
                 bbox_center_x = t_bbox.center().x
                 bbox_center_y = t_bbox.center().y
                 
@@ -329,13 +494,26 @@ class ScalableMismatchArray:
                 trans = db.Trans(db.Point(trans_x, trans_y))
                 array_cell.insert(db.CellInstArray(transistor_pcell, trans))
                 
-                is_dummy = (col == 0 or col == total_cols - 1)
+                # Calculate active indices
+                if is_dummy:
+                    active_row = -1
+                    active_col = -1
+                else:
+                    if dummy_mode == 'none':
+                        active_row = row
+                        active_col = col
+                    elif dummy_mode == 'sides':
+                        active_row = row
+                        active_col = col - 1
+                    else:  # full ring
+                        active_row = row - 1
+                        active_col = col - 1
                 
                 info = {
                     'row': row,
                     'col': col,
-                    'active_row': row,
-                    'active_col': col - 1 if not is_dummy else -1,
+                    'active_row': active_row,
+                    'active_col': active_col,
                     'x': cell_center_x,
                     'y': cell_center_y,
                     'is_dummy': is_dummy,
@@ -354,27 +532,119 @@ class ScalableMismatchArray:
         
         print(f"✓ Placed {active_count} active + {dummy_count} dummy transistors")
         
-        # Verify spacing
-        if len(transistor_info) > 1:
-            t0 = transistor_info[0]
-            t1 = transistor_info[1]
-            
-            # Calculate actual spacing from transistor edge to guardring
-            t_half_width = geom['t_width'] * self.layout.dbu / 2
-            t_half_height = geom['t_height'] * self.layout.dbu / 2
-            
-            left_spacing = (t0['x'] * self.layout.dbu) - t_half_width - GUARDRING_WIDTH
-            right_spacing = geom['pitch_x'] * self.layout.dbu - GUARDRING_WIDTH - (t0['x'] * self.layout.dbu - t_half_width)
-            
-            print(f"\nSpacing verification:")
-            print(f"  Transistor to left guardring: {left_spacing:.3f} µm (target: {GUARDRING_SPACING} µm)")
-            print(f"  Transistor to right guardring: {right_spacing:.3f} µm (target: {GUARDRING_SPACING} µm)")
+        if dummy_mode == 'full':
+            print(f"Full dummy ring: top/bottom/left/right borders")
+        elif dummy_mode == 'sides':
+            print(f"Side dummies only: left/right columns")
+        else:
+            print(f"No dummy transistors")
         
         return array_cell, transistor_info, geom
-    
+
+    def create_pmos_array(self):
+        """Create PMOS array with configurable dummy arrangement - Phase 2"""
+        print(f"\n{'='*60}")
+        print(f"Creating PMOS array {ARRAY_SIZE}x{ARRAY_SIZE}")
+        print(f"{'='*60}")
+        
+        array_cell = self.layout.create_cell(f'pmos_array_{ARRAY_SIZE}x{ARRAY_SIZE}')
+        
+        # Get dummy mode from metadata
+        dummy_mode = self.metadata.get('dummy_mode', 'sides')
+        print(f"  Dummy mode: {dummy_mode}")
+        
+        # Calculate total dimensions based on dummy mode
+        if dummy_mode == 'none':
+            total_rows = ARRAY_SIZE
+            total_cols = ARRAY_SIZE
+        elif dummy_mode == 'sides':
+            total_rows = ARRAY_SIZE
+            total_cols = ARRAY_SIZE + 2
+        else:  # full ring
+            total_rows = ARRAY_SIZE + 2
+            total_cols = ARRAY_SIZE + 2
+        
+        # Create PMOS transistor PCell
+        transistor_pcell = self.create_transistor_pcell('pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
+        t_bbox = transistor_cell.bbox()
+        
+        geom = self.calculate_shared_guardring_array(t_bbox, total_rows, total_cols)
+        
+        # Create N-well guardring structure for PMOS
+        self.create_shared_guardring_structure_pmos(array_cell, geom, total_rows, total_cols)
+        
+        # Place transistors (same logic as NMOS)
+        transistor_info = []
+        active_count = 0
+        dummy_count = 0
+        
+        for row in range(total_rows):
+            for col in range(total_cols):
+                # Determine if dummy based on mode
+                is_dummy = False
+                
+                if dummy_mode == 'sides':
+                    is_dummy = (col == 0 or col == total_cols-1)
+                elif dummy_mode == 'full':
+                    is_dummy = (row == 0 or row == total_rows-1 or 
+                            col == 0 or col == total_cols-1)
+                
+                # Calculate center position
+                cell_center_x = col * geom['pitch_x'] + geom['gr_width'] + geom['cell_inner_width'] // 2
+                cell_center_y = row * geom['pitch_y'] + geom['gr_width'] + geom['cell_inner_height'] // 2
+                
+                # Position transistor
+                bbox_center_x = t_bbox.center().x
+                bbox_center_y = t_bbox.center().y
+                
+                trans_x = cell_center_x - bbox_center_x
+                trans_y = cell_center_y - bbox_center_y
+                
+                trans = db.Trans(db.Point(trans_x, trans_y))
+                array_cell.insert(db.CellInstArray(transistor_pcell, trans))
+                
+                # Calculate active indices
+                if is_dummy:
+                    active_row = -1
+                    active_col = -1
+                else:
+                    if dummy_mode == 'none':
+                        active_row = row
+                        active_col = col
+                    elif dummy_mode == 'sides':
+                        active_row = row
+                        active_col = col - 1
+                    else:  # full ring
+                        active_row = row - 1
+                        active_col = col - 1
+                
+                info = {
+                    'row': row,
+                    'col': col,
+                    'active_row': active_row,
+                    'active_col': active_col,
+                    'x': cell_center_x,
+                    'y': cell_center_y,
+                    'is_dummy': is_dummy,
+                    'gate_x': cell_center_x * self.layout.dbu,
+                    'gate_y': cell_center_y * self.layout.dbu
+                }
+                
+                transistor_info.append(info)
+                
+                if is_dummy:
+                    dummy_count += 1
+                else:
+                    active_count += 1
+        
+        print(f"✓ Placed {active_count} active + {dummy_count} dummy PMOS transistors")
+        
+        return array_cell, transistor_info, geom
+
     def route_gate_connections(self, array_cell, transistor_info):
-        """Route gate connections using loaded pattern"""
-        print(f"\nRouting gate connections...")
+        """Route gate connections with GUI naming convention - Phase 3"""
+        print(f"\nRouting gate connections with GUI naming...")
         
         m3_width = self.dbu(METAL3_WIDTH)
         
@@ -382,12 +652,20 @@ class ScalableMismatchArray:
         routed_count = 0
         
         for t in active_transistors:
-            row = t['active_row']
-            col = t['active_col']
+            active_row = t['active_row']
+            active_col = t['active_col']
             
-            pattern_key = (row, col)
+            # Skip if invalid indices
+            if active_row < 0 or active_col < 0:
+                continue
+            
+            # Map GUI coordinates to KLayout pattern coordinates
+            # KLayout row = (N-1) - GUI row
+            klayout_row = (ARRAY_SIZE - 1) - active_row
+            pattern_key = (klayout_row, active_col)
+            
             if pattern_key not in self.pattern_data:
-                print(f"⚠ No pattern for transistor [{row},{col}]")
+                print(f"⚠ No pattern for GUI[{active_row},{active_col}] → KL[{klayout_row},{active_col}]")
                 continue
             
             pattern = self.pattern_data[pattern_key]
@@ -407,7 +685,7 @@ class ScalableMismatchArray:
             h_length_dbu = self.dbu(pattern['h_length'])
             
             # Horizontal direction based on column
-            if col >= ARRAY_SIZE//2:
+            if active_col >= ARRAY_SIZE//2:
                 b_end_x = start_x + h_length_dbu
             else:
                 b_end_x = start_x - h_length_dbu
@@ -434,15 +712,23 @@ class ScalableMismatchArray:
             )
             array_cell.shapes(self.layers['Metal3']).insert(v_box)
             
-            # Add label
-            label = f"G{row}_{col}"
-            self.add_text(array_cell, b_end_x, exit_y, label)
-            self.debug_info['gate_routes'].append(label)
+            # PHASE 3: Use GUI naming convention for label
+            gui_label = f"G{active_row}_{active_col}"  # GUI coordinates
+            self.add_text(array_cell, b_end_x, exit_y, gui_label)
+            
+            # Store debug info with both coordinate systems
+            self.debug_info['gate_routes'].append({
+                'gui_label': gui_label,
+                'gui_coords': (active_row, active_col),
+                'kl_coords': (klayout_row, active_col)
+            })
             
             routed_count += 1
+            
+            print(f"Routed {gui_label}: GUI[{active_row},{active_col}] → KL[{klayout_row},{active_col}]")
         
-        print(f"✓ Routed {routed_count} gates")
-    
+        print(f"Routed {routed_count} gates with GUI naming convention")
+
     def create_gate_via_stack(self, cell, x, y):
         """Create via stack from Poly to Metal3"""
         cont_size = self.dbu(CONT_SIZE)
@@ -484,26 +770,54 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['TEXT']).insert(text_obj)
     
     def generate_structure(self, output_file):
-        """Generate complete NMOS-only structure"""
+        """Generate complete structure with NMOS and/or PMOS - FIXED VERSION"""
         print("\n" + "="*60)
-        print("GENERATING NMOS MISMATCH TEST STRUCTURE")
+        print("GENERATING MISMATCH TEST STRUCTURE")
         print("="*60)
         
-        # Create NMOS array
-        nmos_array, nmos_info, nmos_geom = self.create_nmos_array()
-        self.route_gate_connections(nmos_array, nmos_info)
+        print(f"Device type requested: {self.device_type}")
         
-        # Place in top cell
-        nmos_trans = db.Trans(db.Point(0, 0))
-        self.top_cell.insert(db.CellInstArray(nmos_array.cell_index(), nmos_trans))
+        if self.device_type == 'both':
+            # Create both NMOS and PMOS arrays
+            nmos_array, nmos_info, nmos_geom = self.create_nmos_array()
+            self.route_gate_connections(nmos_array, nmos_info)
+            
+            pmos_array, pmos_info, pmos_geom = self.create_pmos_array()
+            self.route_gate_connections(pmos_array, pmos_info)
+            
+            # Place side by side
+            nmos_trans = db.Trans(db.Point(0, 0))
+            self.top_cell.insert(db.CellInstArray(nmos_array.cell_index(), nmos_trans))
+            
+            separation = self.dbu(30)
+            pmos_x = nmos_array.bbox().width() + separation
+            pmos_trans = db.Trans(db.Point(pmos_x, 0))
+            self.top_cell.insert(db.CellInstArray(pmos_array.cell_index(), pmos_trans))
+            
+            print("✓ Generated both NMOS and PMOS arrays")
         
-        # PMOS GENERATION DISABLED
-        print("\n⚠ PMOS generation disabled - NMOS only structure")
+        elif self.device_type == 'pmos':
+            # PMOS only
+            pmos_array, pmos_info, pmos_geom = self.create_pmos_array()
+            self.route_gate_connections(pmos_array, pmos_info)
+            pmos_trans = db.Trans(db.Point(0, 0))
+            self.top_cell.insert(db.CellInstArray(pmos_array.cell_index(), pmos_trans))
+            
+            print("✓ Generated PMOS array only")
+        
+        else:
+            # NMOS only (default)
+            nmos_array, nmos_info, nmos_geom = self.create_nmos_array()
+            self.route_gate_connections(nmos_array, nmos_info)
+            nmos_trans = db.Trans(db.Point(0, 0))
+            self.top_cell.insert(db.CellInstArray(nmos_array.cell_index(), nmos_trans))
+            
+            print("✓ Generated NMOS array only")
         
         # Add title
         bbox = self.top_cell.bbox()
         title_y = bbox.top + self.dbu(10)
-        title = f"NMOS Mismatch Array {ARRAY_SIZE}x{ARRAY_SIZE} - W={TRANSISTOR_W}µm L={TRANSISTOR_L}µm"
+        title = f"{self.device_type.upper()} Mismatch Array {ARRAY_SIZE}x{ARRAY_SIZE} - W={TRANSISTOR_W}µm L={TRANSISTOR_L}µm"
         self.add_text(self.top_cell, bbox.center().x, title_y, title)
         
         # Save
@@ -519,9 +833,10 @@ class ScalableMismatchArray:
         total_area = bbox.width() * bbox.height() / 1e6
         
         print("\n" + "="*60)
-        print("FINAL REPORT - NMOS STRUCTURE GENERATED")
+        print(f"FINAL REPORT - {self.device_type.upper()} STRUCTURE GENERATED")
         print("="*60)
         print(f"\nConfiguration:")
+        print(f"  Device Type: {self.device_type}")
         print(f"  Transistor W: {TRANSISTOR_W} µm")
         print(f"  Transistor L: {TRANSISTOR_L} µm")
         print(f"  Guardring spacing: {GUARDRING_SPACING} µm")
@@ -540,18 +855,27 @@ class ScalableMismatchArray:
         print(f"  ✓ Scalable dimensions (W, L configurable)")
         print(f"  ✓ Configurable guardring spacing ({GUARDRING_SPACING}µm)")
         print(f"  ✓ Shared guardring borders")
-        print(f"  ✓ NMOS only (PMOS disabled)")
+        print(f"  ✓ {self.device_type.upper()} support enabled")
         print(f"  ✓ Pattern-based routing")
         print("="*60)
 
 def main():
     """Main function"""
     
-    # Output file
+    # Load data to get device type
+    full_data = load_pattern_and_config()
+    device_type = full_data.get('metadata', {}).get('device_type', 'nmos')
+    
+    # Output file with appropriate name
     try:
         output
     except NameError:
-        output = f"mismatch_array_{ARRAY_SIZE}x{ARRAY_SIZE}_nmos_only.gds"
+        if device_type == 'both':
+            output = f"mismatch_array_{ARRAY_SIZE}x{ARRAY_SIZE}_both.gds"
+        elif device_type == 'pmos':
+            output = f"mismatch_array_{ARRAY_SIZE}x{ARRAY_SIZE}_pmos.gds"
+        else:
+            output = f"mismatch_array_{ARRAY_SIZE}x{ARRAY_SIZE}_nmos.gds"
     
     print(f"Output file: {output}")
     

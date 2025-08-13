@@ -171,7 +171,7 @@ class AdvancedRoutingGUI:
         # Array parameters
         self.array_rows = 4
         self.array_cols = 4
-        self.has_dummies = True
+        self.dummy_mode = 'sides'  # 'none', 'sides', or 'full'
         
         # ====== CONFIGURABLE TRANSISTOR DIMENSIONS (µm) ======
         # These should match your PDK requirements
@@ -246,34 +246,63 @@ class AdvancedRoutingGUI:
         self.show_configuration_info()
 
     def show_configuration_info(self):
-        """Display current transistor configuration"""
+        """Display current configuration"""
         instructions = f"""MANHATTAN ROUTING - SCALABLE CONFIGURATION
         
-    Current Transistor Configuration:
+    Current Configuration:
     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    • Device Type: {self.device_type_var.get() if hasattr(self, 'device_type_var') else 'nmos'}
     • Transistor Width (W): {self.transistor_W:.2f} µm
     • Transistor Length (L): {self.transistor_L:.2f} µm
     • Guardring Spacing: {self.guardring_spacing:.2f} µm
-    • Guardring Width: {self.guardring_width:.2f} µm
+    • Array: {self.array_rows}x{self.array_cols}
+    • Dummy Mode: {self.dummy_mode_var.get()}
     • Calculated Pitch X: {self.pitch_x:.2f} µm
     • Calculated Pitch Y: {self.pitch_y:.2f} µm
 
-    Instructions:
-    1. Click on a transistor gate (red line) to start routing
-    2. Drag to create route - alternates H/V automatically
-    3. Release to confirm the route
-    4. Right-click to cancel or delete
-    5. Use "Copy Pattern Dict" to export for KLayout
+    Array Structure:
+    """
+        
+        # Show array structure based on dummy mode
+        dummy_mode = self.dummy_mode_var.get()
+        if dummy_mode == 'full':
+            instructions += """
+    [D] [D]    [D]    [D]    [D]    [D]
+    [D] [G0,0] [G0,1] [G0,2] [G0,3] [D]
+    [D] [G1,0] [G1,1] [G1,2] [G1,3] [D]
+    [D] [G2,0] [G2,1] [G2,2] [G2,3] [D]
+    [D] [G3,0] [G3,1] [G3,2] [G3,3] [D]
+    [D] [D]    [D]    [D]    [D]    [D]
+    """
+        elif dummy_mode == 'sides':
+            instructions += """
+    [D] [G0,0] [G0,1] [G0,2] [G0,3] [D]
+    [D] [G1,0] [G1,1] [G1,2] [G1,3] [D]
+    [D] [G2,0] [G2,1] [G2,2] [G2,3] [D]
+    [D] [G3,0] [G3,1] [G3,2] [G3,3] [D]
+    """
+        else:
+            instructions += """
+    [G0,0] [G0,1] [G0,2] [G0,3]
+    [G1,0] [G1,1] [G1,2] [G1,3]
+    [G2,0] [G2,1] [G2,2] [G2,3]
+    [G3,0] [G3,1] [G3,2] [G3,3]
+    """
+        
+        instructions += """
+    D = Dummy transistor
+    G = Active transistor with GUI coordinates
 
     Coordinate Mapping:
-    • GUI Display: Row 0 = TOP, Row N = BOTTOM
+    • GUI: Row 0 = TOP, Row N = BOTTOM
     • KLayout: Row 0 = BOTTOM, Row N = TOP
-    • Pattern export handles mapping automatically
+    • Mapping: KL_row = (N-1) - GUI_row
 
     Tips:
     • Routes snap to 50nm grid
     • Auto-clone enabled by default
-    • Route column 0 first for auto-cloning"""
+    • Column 0 routes clone to other columns
+    """
         
         self.report_text.delete(1.0, tk.END)
         self.report_text.insert(1.0, instructions)
@@ -386,15 +415,45 @@ class AdvancedRoutingGUI:
         ttk.Spinbox(toolbar, from_=2, to=20, width=5, textvariable=self.cols_var,
                 command=self.update_array).pack(side=tk.LEFT)
         
-        self.dummies_var = tk.BooleanVar(value=self.has_dummies)
-        ttk.Checkbutton(toolbar, text="Side Dummies", variable=self.dummies_var,
-                    command=self.update_array).pack(side=tk.LEFT, padx=10)
+        ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill='y', padx=10)
+        ttk.Label(toolbar, text="Dummies:").pack(side=tk.LEFT, padx=5)
+        self.dummy_mode_var = tk.StringVar(value='sides')
+        dummy_frame = ttk.Frame(toolbar)
+        dummy_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(dummy_frame, text="None", 
+                        variable=self.dummy_mode_var, 
+                        value='none',
+                        command=self.update_array).pack(side=tk.LEFT)
+        ttk.Radiobutton(dummy_frame, text="Sides", 
+                        variable=self.dummy_mode_var, 
+                        value='sides',
+                        command=self.update_array).pack(side=tk.LEFT)
+        ttk.Radiobutton(dummy_frame, text="Full Ring", 
+                        variable=self.dummy_mode_var, 
+                        value='full',
+                        command=self.update_array).pack(side=tk.LEFT)
         
+        # Auto-clone checkbox
         self.auto_clone_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(toolbar, text="Auto-Clone Patterns", variable=self.auto_clone_var,
                         command=self.toggle_auto_clone).pack(side=tk.LEFT, padx=10)
-    
         
+        # Device type selector (if you have PMOS support)
+        if hasattr(self, 'device_type_var'):
+            ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill='y', padx=10)
+            ttk.Label(toolbar, text="Device:").pack(side=tk.LEFT, padx=5)
+            device_frame = ttk.Frame(toolbar)
+            device_frame.pack(side=tk.LEFT)
+            ttk.Radiobutton(device_frame, text="NMOS", 
+                            variable=self.device_type_var, 
+                            value='nmos').pack(side=tk.LEFT)
+            ttk.Radiobutton(device_frame, text="PMOS", 
+                            variable=self.device_type_var, 
+                            value='pmos').pack(side=tk.LEFT)
+        else:
+            # Initialize if not exists
+            self.device_type_var = tk.StringVar(value='nmos')
+
         # Separador
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill='y', padx=10)
         
@@ -512,37 +571,54 @@ class AdvancedRoutingGUI:
         return x_um, y_um
     
     def create_array(self):
-        """Crea el array de transistores con dummies solo en columnas laterales"""
+        """Create array with configurable dummy arrangement"""
         self.transistors.clear()
         rows = self.rows_var.get()
         cols = self.cols_var.get()
         
-        total_rows = rows
-        total_cols = cols
+        dummy_mode = self.dummy_mode_var.get()
         
-        if self.has_dummies:
-            total_cols += 2  # Solo agregar columnas dummy, no filas
+        # Calculate total dimensions based on dummy mode
+        if dummy_mode == 'none':
+            total_rows = rows
+            total_cols = cols
+        elif dummy_mode == 'sides':
+            total_rows = rows
+            total_cols = cols + 2  # Add side columns
+        else:  # full ring
+            total_rows = rows + 2  # Add top and bottom
+            total_cols = cols + 2  # Add sides
         
         for row in range(total_rows):
             for col in range(total_cols):
-                # Determinar si es dummy (solo columnas laterales)
+                # Determine if dummy based on mode
                 is_dummy = False
-                if self.has_dummies:
-                    is_dummy = (col == 0 or col == total_cols-1)
                 
-                # Posición del transistor
+                if dummy_mode == 'sides':
+                    is_dummy = (col == 0 or col == total_cols-1)
+                elif dummy_mode == 'full':
+                    is_dummy = (row == 0 or row == total_rows-1 or 
+                            col == 0 or col == total_cols-1)
+                
+                # Calculate position
                 x = col * self.pitch_x
                 y = row * self.pitch_y
                 
-                # Calcular índices activos
-                if self.has_dummies and not is_dummy:
-                    active_row = row
-                    active_col = col - 1  # Restar 1 por la columna dummy izquierda
+                # Calculate active indices (for non-dummy transistors)
+                if is_dummy:
+                    active_row = -1
+                    active_col = -1
                 else:
-                    active_row = row if not is_dummy else -1
-                    active_col = col if not is_dummy else -1
+                    if dummy_mode == 'none':
+                        active_row = row
+                        active_col = col
+                    elif dummy_mode == 'sides':
+                        active_row = row
+                        active_col = col - 1
+                    else:  # full ring
+                        active_row = row - 1
+                        active_col = col - 1
                 
-                # Crear info del transistor
                 self.transistors[(row, col)] = {
                     'row': row,
                     'col': col,
@@ -553,7 +629,8 @@ class AdvancedRoutingGUI:
                     'is_dummy': is_dummy,
                     'routed': False
                 }
-    
+
+
     def draw_canvas(self):
         """Dibuja todo el canvas"""
         self.canvas.delete("all")
@@ -623,25 +700,34 @@ class AdvancedRoutingGUI:
                                    anchor='e', tags="grid")
     
     def draw_transistor(self, t):
-        """Dibuja transistor con orientación correcta: |DRAIN|GATE|SOURCE|"""
+        """Draw transistor with GUI naming convention"""
         x, y = t['x'], t['y']
         
-        # Convertir a canvas
+        # Convert to canvas
         x1, y1 = self.um_to_canvas(x, y)
         x2, y2 = self.um_to_canvas(x + self.transistor_width, 
                                 y + self.transistor_height)
         
-        # Color según tipo
-        fill_color = self.colors['dummy'] if t['is_dummy'] else self.colors['transistor']
+        # Get device type if available
+        device_type = self.device_type_var.get() if hasattr(self, 'device_type_var') else 'nmos'
         
-        # Dibujar rectángulo del transistor
+        # Color based on type and dummy status
+        if t['is_dummy']:
+            fill_color = self.colors['dummy']
+        else:
+            if device_type == 'pmos':
+                fill_color = '#e0d0d0'  # Light pink for PMOS
+            else:
+                fill_color = self.colors['transistor']
+        
+        # Draw transistor rectangle
         rect = self.canvas.create_rectangle(x1, y1, x2, y2,
                                         fill=fill_color,
                                         outline='black',
                                         width=2,
                                         tags=f"transistor_{t['row']}_{t['col']}")
         
-        # Dibujar DRAIN (izquierda)
+        # Draw DRAIN (left)
         drain_x = x + self.transistor_width * 0.2
         drain_y = y + self.transistor_height / 2
         dx1, dy1 = self.um_to_canvas(drain_x - 0.05, drain_y - 0.05)
@@ -650,17 +736,18 @@ class AdvancedRoutingGUI:
                             fill='#44ff44', outline='darkgreen',
                             tags=f"drain_{t['row']}_{t['col']}")
         
-        # Dibujar GATE (centro - línea vertical)
+        # Draw GATE (center - vertical line)
         gate_x = x + self.transistor_width / 2
+        gate_color = '#4444ff' if device_type == 'pmos' else self.colors['gate']
         gx1, gy1 = self.um_to_canvas(gate_x - 0.02, y + 0.1)
         gx2, gy2 = self.um_to_canvas(gate_x + 0.02, y + self.transistor_height - 0.1)
         self.canvas.create_rectangle(gx1, gy1, gx2, gy2,
-                                fill=self.colors['gate'],
-                                outline='darkred',
+                                fill=gate_color,
+                                outline='darkred' if device_type == 'nmos' else 'darkblue',
                                 width=1,
                                 tags=f"gate_{t['row']}_{t['col']}")
         
-        # Dibujar SOURCE (derecha)
+        # Draw SOURCE (right)
         source_x = x + self.transistor_width * 0.8
         source_y = y + self.transistor_height / 2
         sx1, sy1 = self.um_to_canvas(source_x - 0.05, source_y - 0.05)
@@ -669,33 +756,29 @@ class AdvancedRoutingGUI:
                             fill='#4444ff', outline='darkblue',
                             tags=f"source_{t['row']}_{t['col']}")
         
-        # Etiquetas D, G, S
-        if not t['is_dummy']:
-            # Solo para transistores activos
-            font_size = max(6, int(8 * self.zoom_level / 50))
-            dx, dy = self.um_to_canvas(drain_x, y - 0.2)
-            self.canvas.create_text(dx, dy, text="D", font=('Arial', font_size))
-            gx, gy = self.um_to_canvas(gate_x, y - 0.2)
-            self.canvas.create_text(gx, gy, text="G", font=('Arial', font_size))
-            sx, sy = self.um_to_canvas(source_x, y - 0.2)
-            self.canvas.create_text(sx, sy, text="S", font=('Arial', font_size))
-        
-        # Etiqueta del transistor mostrando ambas coordenadas para claridad
+        # Labels with GUI naming convention (Phase 3)
         if t['is_dummy']:
             label = f"D[{t['row']},{t['col']}]"
         else:
-            active_row = t['row']
-            active_col = t['col'] - (1 if self.has_dummies else 0)
+            # Use GUI coordinates for active transistors
+            active_row = t['active_row']
+            active_col = t['active_col']
             
-            # Calcular coordenada KLayout
-            klayout_row = (self.array_rows - 1) - active_row
-            
-            # Mostrar ambas para debugging
-            label = f"G[{active_row},{active_col}]\nK[{klayout_row},{active_col}]"
+            if active_row >= 0 and active_col >= 0:
+                # Primary label uses G for GUI coordinates
+                label = f"G[{active_row},{active_col}]"
+                
+                # Optional: show KLayout mapping for debugging
+                if getattr(self, 'show_klayout_mapping', False):
+                    klayout_row = (self.array_rows - 1) - active_row
+                    label += f"\n(K[{klayout_row},{active_col}])"
+            else:
+                label = "ERR"
         
-        lx, ly = self.um_to_canvas(x - 0.5, y + self.transistor_height / 2)
-        self.canvas.create_text(lx, ly, text=label, font=('Arial', 7),
-                            anchor='e', tags=f"label_{t['row']}_{t['col']}")
+        # Position label
+        lx, ly = self.um_to_canvas(x + self.transistor_width/2, y + self.transistor_height + 0.2)
+        self.canvas.create_text(lx, ly, text=label, font=('Arial', 8),
+                            anchor='n', tags=f"label_{t['row']}_{t['col']}")
 
     def draw_direction_indicators(self):
         """Dibuja indicadores de dirección de salida"""
@@ -1077,16 +1160,17 @@ class AdvancedRoutingGUI:
 
     
     def update_array(self):
-        """Actualiza el array cuando cambian los parámetros"""
+        """Update array when parameters change"""
         self.array_rows = self.rows_var.get()
         self.array_cols = self.cols_var.get()
-        self.has_dummies = self.dummies_var.get()
+        self.dummy_mode = self.dummy_mode_var.get()  # Changed from has_dummies
         
         self.routing_segments.clear()
         
         self.create_array()
         self.draw_canvas()
         self.update_stats()
+        self.show_configuration_info()
     
     def delete_segment(self, segment):
         """Elimina un segmento específico"""
@@ -1145,8 +1229,8 @@ class AdvancedRoutingGUI:
                 'metadata': {
                     'array_rows': self.array_rows,
                     'array_cols': self.array_cols,
-                    'has_dummies': self.has_dummies,
-                    # NEW: Include transistor dimensions
+                    'dummy_mode': self.dummy_mode_var.get(),  # Changed from has_dummies
+                    'device_type': self.device_type_var.get() if hasattr(self, 'device_type_var') else 'nmos',
                     'transistor_W': self.transistor_W,
                     'transistor_L': self.transistor_L,
                     'guardring_spacing': self.guardring_spacing,
@@ -1161,11 +1245,15 @@ class AdvancedRoutingGUI:
             with open(filename, 'w') as f:
                 json.dump(pattern_data, f, indent=2)
             
+            # Also save as temp_pattern.json for immediate use
+            with open('temp_pattern.json', 'w') as f:
+                json.dump(pattern_data, f, indent=2)
+            
             messagebox.showinfo("Save Pattern", 
                             f"Pattern saved to {filename}\n"
-                            f"Configuration: W={self.transistor_W}µm, L={self.transistor_L}µm")
-
-
+                            f"Configuration: W={self.transistor_W}µm, L={self.transistor_L}µm\n"
+                            f"Dummy mode: {self.dummy_mode_var.get()}")
+            
     def load_pattern(self):
         """Load pattern and apply dimension configuration"""
         filename = filedialog.askopenfilename(
@@ -1178,34 +1266,37 @@ class AdvancedRoutingGUI:
             
             meta = pattern_data['metadata']
             
-            # Check if dimensions are included (for compatibility)
-            if 'transistor_W' in meta and 'transistor_L' in meta:
-                # Apply dimensions from file
+            # Apply dimensions from file
+            if 'transistor_W' in meta:
                 self.transistor_W = meta['transistor_W']
+            if 'transistor_L' in meta:
                 self.transistor_L = meta['transistor_L']
+            if 'guardring_spacing' in meta:
                 self.guardring_spacing = meta.get('guardring_spacing', 2.0)
-                self.guardring_width = meta.get('guardring_width', 0.5)
-                
-                # Recalculate derived parameters
-                self.transistor_width = self.transistor_W
-                self.transistor_height = self.transistor_L * 4
-                self.pitch_x = self.transistor_width + 2 * self.guardring_spacing + self.guardring_width
-                self.pitch_y = self.transistor_height + 2 * self.guardring_spacing + self.guardring_width
-                
-                print(f"Loaded configuration: W={self.transistor_W}µm, L={self.transistor_L}µm")
+            
+            # Handle dummy mode
+            if 'dummy_mode' in meta:
+                self.dummy_mode_var.set(meta['dummy_mode'])
+            elif 'has_dummies' in meta:
+                # Backward compatibility
+                self.dummy_mode_var.set('sides' if meta['has_dummies'] else 'none')
+            
+            # Handle device type
+            if 'device_type' in meta and hasattr(self, 'device_type_var'):
+                self.device_type_var.set(meta['device_type'])
             
             # Update array size if different
             if (meta['array_rows'] != self.array_rows or
-                meta['array_cols'] != self.array_cols or
-                meta['has_dummies'] != self.has_dummies):
+                meta['array_cols'] != self.array_cols):
                 
                 if messagebox.askyesno("Load Pattern", 
                                     "Pattern was created for a different array size.\n"
                                     "Do you want to adjust the array to match?"):
                     self.rows_var.set(meta['array_rows'])
                     self.cols_var.set(meta['array_cols'])
-                    self.dummies_var.set(meta['has_dummies'])
-                    self.update_array()
+            
+            # Update array with new settings
+            self.update_array()
             
             # Load routing segments
             self.routing_segments.clear()
@@ -1489,6 +1580,9 @@ class AdvancedRoutingGUI:
         if not self.auto_clone_enabled:
             return
         
+        # Get device type
+        device_type = self.device_type_var.get()
+
         # Get source pattern using actual coordinates
         source_segments = []
         source_key = (source_row, source_col)
