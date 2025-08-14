@@ -642,33 +642,157 @@ class ScalableMismatchArray:
         
         return array_cell, transistor_info, geom
 
+    def create_route_from_points(self, array_cell, gate_x, gate_y, route_points, m3_width):
+        """
+        Create route from points - Y-INVERSION ONLY
+        """
+        segments = []
+        
+        if len(route_points) < 2:
+            return segments
+        
+        for i in range(len(route_points) - 1):
+            current_point = route_points[i]
+            next_point = route_points[i + 1]
+            
+            # Only invert Y coordinate
+            curr_x = gate_x + self.dbu(current_point['x'])  # Keep X as is
+            curr_y = gate_y - self.dbu(current_point['y'])  # Invert Y
+            next_x = gate_x + self.dbu(next_point['x'])     # Keep X as is
+            next_y = gate_y - self.dbu(next_point['y'])     # Invert Y
+            
+            # Rest of the code remains the same...
+            dx = abs(next_x - curr_x)
+            dy = abs(next_y - curr_y)
+            
+            if dx > 1 and dy < 1:  # Horizontal
+                box = db.Box(
+                    min(curr_x, next_x) - m3_width//2,
+                    curr_y - m3_width//2,
+                    max(curr_x, next_x) + m3_width//2,
+                    curr_y + m3_width//2
+                )
+                array_cell.shapes(self.layers['Metal3']).insert(box)
+                
+            elif dy > 1 and dx < 1:  # Vertical
+                box = db.Box(
+                    curr_x - m3_width//2,
+                    min(curr_y, next_y) - m3_width//2,
+                    curr_x + m3_width//2,
+                    max(curr_y, next_y) + m3_width//2
+                )
+                array_cell.shapes(self.layers['Metal3']).insert(box)
+            
+            elif dx > 1 and dy > 1:
+                # L-shape
+                h_box = db.Box(
+                    min(curr_x, next_x) - m3_width//2,
+                    curr_y - m3_width//2,
+                    max(curr_x, next_x) + m3_width//2,
+                    curr_y + m3_width//2
+                )
+                array_cell.shapes(self.layers['Metal3']).insert(h_box)
+                
+                v_box = db.Box(
+                    next_x - m3_width//2,
+                    min(curr_y, next_y) - m3_width//2,
+                    next_x + m3_width//2,
+                    max(curr_y, next_y) + m3_width//2
+                )
+                array_cell.shapes(self.layers['Metal3']).insert(v_box)
+        
+        return segments
+    
+    def create_legacy_route(self, array_cell, gate_x, gate_y, pattern, active_col, m3_width):
+        """Create route from legacy pattern format (backward compatibility)"""
+        segments = []
+        
+        # Apply pattern WITHOUT direction logic
+        offset_y_dbu = self.dbu(pattern.get('offset_y', 0))
+        h_length_dbu = self.dbu(pattern.get('h_length', 0))
+        v_length_dbu = self.dbu(pattern.get('v_length', 0))
+        
+        start_x = gate_x
+        start_y = gate_y + offset_y_dbu
+        
+        # NO AUTOMATIC DIRECTION - respect pattern exactly
+        # NO MIRROR EFFECT - all columns use same pattern
+        end_x = start_x + h_length_dbu
+        
+        # Horizontal segment
+        if h_length_dbu > 0:
+            h_box = db.Box(
+                min(start_x, end_x) - m3_width//2, start_y - m3_width//2,
+                max(start_x, end_x) + m3_width//2, start_y + m3_width//2
+            )
+            array_cell.shapes(self.layers['Metal3']).insert(h_box)
+            segments.append({'type': 'H', 'start': (start_x, start_y), 'end': (end_x, start_y)})
+        
+        # Vertical segment - respect pattern direction
+        if pattern.get('goes_up', False):
+            exit_y = start_y + v_length_dbu
+        else:
+            exit_y = start_y - v_length_dbu
+        
+        v_box = db.Box(
+            end_x - m3_width//2, min(start_y, exit_y),
+            end_x + m3_width//2, max(start_y, exit_y)
+        )
+        array_cell.shapes(self.layers['Metal3']).insert(v_box)
+        segments.append({'type': 'V', 'start': (end_x, start_y), 'end': (end_x, exit_y)})
+        
+        return segments
+
+
     def route_gate_connections(self, array_cell, transistor_info):
-        """Route gate connections with GUI naming convention - Phase 3"""
-        print(f"\nRouting gate connections with GUI naming...")
+        """Route gate connections - wrapper for enhanced version"""
+        # Usar la versión enhanced si existe
+        if hasattr(self, 'route_gate_connections_enhanced'):
+            return self.route_gate_connections_enhanced(array_cell, transistor_info)
+        else:
+            print("WARNING: No enhanced routing method found, skipping gate routing")
+            return None
+
+    def route_gate_connections_enhanced(self, array_cell, transistor_info):
+        """
+        Route with FIXED transistor mapping
+        """
+        print(f"\nRouting gate connections...")
+        print(f"  Array size: {ARRAY_SIZE}x{ARRAY_SIZE}")
+        print(f"  Dummy mode: {self.dummy_mode}")
         
         m3_width = self.dbu(METAL3_WIDTH)
-        
         active_transistors = [t for t in transistor_info if not t['is_dummy']]
-        routed_count = 0
+        routes_created = 0
         
         for t in active_transistors:
-            active_row = t['active_row']
+            # Get ACTIVE coordinates from KLayout's perspective
+            active_row = t['active_row']  
             active_col = t['active_col']
             
-            # Skip if invalid indices
             if active_row < 0 or active_col < 0:
                 continue
             
-            # Map GUI coordinates to KLayout pattern coordinates
-            # KLayout row = (N-1) - GUI row
-            klayout_row = (ARRAY_SIZE - 1) - active_row
-            pattern_key = (klayout_row, active_col)
+            # CRITICAL FIX: Map KLayout coordinates to GUI coordinates
+            # GUI row 0 = top, KLayout row 0 = bottom
+            # So we need to flip the row for lookup
+            gui_row = (ARRAY_SIZE - 1) - active_row
+            gui_col = active_col  # Columns don't change
             
-            if pattern_key not in self.pattern_data:
-                print(f"⚠ No pattern for GUI[{active_row},{active_col}] → KL[{klayout_row},{active_col}]")
+            # Look up pattern with GUI coordinates
+            pattern_key_str = f"{gui_row},{gui_col}"
+            pattern_key = (gui_row, gui_col)
+            
+            # Try both formats
+            pattern = self.pattern_data.get(pattern_key)
+            if not pattern:
+                pattern = self.pattern_data.get(pattern_key_str)
+            
+            if not pattern:
+                print(f"  KL[{active_row},{active_col}] -> GUI[{gui_row},{gui_col}] - No pattern")
                 continue
             
-            pattern = self.pattern_data[pattern_key]
+            print(f"  KL[{active_row},{active_col}] -> GUI[{gui_row},{gui_col}] - Found pattern")
             
             # Gate position
             gate_x = t['x']
@@ -677,57 +801,29 @@ class ScalableMismatchArray:
             # Create via stack at gate
             self.create_gate_via_stack(array_cell, gate_x, gate_y)
             
-            # Apply pattern
-            offset_y_dbu = self.dbu(pattern['offset_y'])
-            start_x = gate_x
-            start_y = gate_y + offset_y_dbu
-            
-            h_length_dbu = self.dbu(pattern['h_length'])
-            
-            # Horizontal direction based on column
-            if active_col >= ARRAY_SIZE//2:
-                b_end_x = start_x + h_length_dbu
-            else:
-                b_end_x = start_x - h_length_dbu
-            
-            # Draw horizontal segment
-            if h_length_dbu > 0:
-                h_box = db.Box(
-                    min(start_x, b_end_x) - m3_width//2, start_y - m3_width//2,
-                    max(start_x, b_end_x) + m3_width//2, start_y + m3_width//2
+            # Draw route from pattern
+            if 'route_points' in pattern:
+                self.create_route_from_points(
+                    array_cell, gate_x, gate_y, 
+                    pattern['route_points'], m3_width
                 )
-                array_cell.shapes(self.layers['Metal3']).insert(h_box)
-            
-            # Vertical segment
-            v_length_dbu = self.dbu(pattern['v_length'])
-            
-            if pattern['goes_up']:
-                exit_y = start_y + v_length_dbu
-            else:
-                exit_y = start_y - v_length_dbu
-            
-            v_box = db.Box(
-                b_end_x - m3_width // 2, min(start_y, exit_y),
-                b_end_x + m3_width // 2, max(start_y, exit_y)
-            )
-            array_cell.shapes(self.layers['Metal3']).insert(v_box)
-            
-            # PHASE 3: Use GUI naming convention for label
-            gui_label = f"G{active_row}_{active_col}"  # GUI coordinates
-            self.add_text(array_cell, b_end_x, exit_y, gui_label)
-            
-            # Store debug info with both coordinate systems
-            self.debug_info['gate_routes'].append({
-                'gui_label': gui_label,
-                'gui_coords': (active_row, active_col),
-                'kl_coords': (klayout_row, active_col)
-            })
-            
-            routed_count += 1
-            
-            print(f"Routed {gui_label}: GUI[{active_row},{active_col}] → KL[{klayout_row},{active_col}]")
+                
+                # Add label
+                if pattern['route_points']:
+                    last_point = pattern['route_points'][-1]
+                    label_x = gate_x + self.dbu(last_point['x'])
+                    label_y = gate_y - self.dbu(last_point['y'])  # Y-inverted
+                    
+                    # Use GUI coordinates for label
+                    label = f"G{gui_row}_{gui_col}"
+                    self.add_text(array_cell, label_x, label_y, label)
+                
+                routes_created += 1
         
-        print(f"Routed {routed_count} gates with GUI naming convention")
+        print(f"  Created {routes_created} routes")
+        return routes_created
+
+
 
     def create_gate_via_stack(self, cell, x, y):
         """Create via stack from Poly to Metal3"""

@@ -13,155 +13,172 @@ import json
 import math
 from datetime import datetime
 
-class StrictManhattanRouter:
-    """Manejador de ruteo estrictamente Manhattan (solo H/V)"""
+class EnhancedManhattanRouter:
+    """Enhanced Manhattan router with multiple turns and preview support"""
     
     def __init__(self, grid_snap=0.05):
-        self.grid_snap = grid_snap  # Snap to 50nm grid
+        self.grid_snap = grid_snap
         self.segments = []
+        self.points = []  # Store all routing points
         self.current_point = None
-        self.routing_mode = 'H'  # Empezar con horizontal
+        self.routing_state = 'IDLE'  # IDLE, ROUTING, ADDING_POINTS
+        self.route_points = []  # Store waypoints
         
     def start_route(self, x, y):
-        """Inicia una nueva ruta"""
+        """Start a new route"""
         self.segments = []
+        self.points = []
         self.current_point = self.snap_to_grid(x, y)
-        self.routing_mode = 'H'
+        self.points.append(self.current_point)
         return self.current_point
     
     def snap_to_grid(self, x, y):
-        """Ajusta coordenadas a la grilla"""
+        """Snap coordinates to grid"""
         x_snap = round(x / self.grid_snap) * self.grid_snap
         y_snap = round(y / self.grid_snap) * self.grid_snap
         return (x_snap, y_snap)
     
     def add_point(self, x, y):
-        """Agrega un punto creando segmento H o V"""
+        """Add a point to the route (allows multiple turns)"""
         if not self.current_point:
             return []
         
         target = self.snap_to_grid(x, y)
-        curr_x, curr_y = self.current_point
-        tgt_x, tgt_y = target
         
-        segments_added = []
+        # Don't add if same as current point
+        if target == self.current_point:
+            return []
         
-        # Determinar si necesitamos movimiento H, V o ambos
-        dx = abs(tgt_x - curr_x)
-        dy = abs(tgt_y - curr_y)
+        # Store the point
+        self.points.append(target)
         
-        if dx > 0.01 and dy > 0.01:
-            # Necesitamos ambos - crear ángulo recto
-            if self.routing_mode == 'H':
-                # Horizontal primero
-                mid_point = (tgt_x, curr_y)
-                segments_added.append({
-                    'type': 'horizontal',
-                    'start': self.current_point,
-                    'end': mid_point
-                })
-                segments_added.append({
-                    'type': 'vertical',
-                    'start': mid_point,
-                    'end': target
-                })
-                self.routing_mode = 'V'  # Alternar para próximo
-            else:
-                # Vertical primero
-                mid_point = (curr_x, tgt_y)
-                segments_added.append({
-                    'type': 'vertical',
-                    'start': self.current_point,
-                    'end': mid_point
-                })
-                segments_added.append({
-                    'type': 'horizontal',
-                    'start': mid_point,
-                    'end': target
-                })
-                self.routing_mode = 'H'  # Alternar para próximo
-        elif dx > 0.01:
-            # Solo horizontal
-            segments_added.append({
-                'type': 'horizontal',
-                'start': self.current_point,
-                'end': target
-            })
-        elif dy > 0.01:
-            # Solo vertical
-            segments_added.append({
-                'type': 'vertical',
-                'start': self.current_point,
-                'end': target
-            })
+        # Create Manhattan segments from current to target
+        segments_added = self.create_manhattan_path(self.current_point, target)
         
-        if segments_added:
-            self.segments.extend(segments_added)
-            self.current_point = target
+        self.segments.extend(segments_added)
+        self.current_point = target
         
         return segments_added
     
     def get_preview_segments(self, x, y):
-        """Obtiene segmentos de preview sin confirmar"""
+        """Get preview segments for current mouse position without committing"""
         if not self.current_point:
             return []
         
         target = self.snap_to_grid(x, y)
-        curr_x, curr_y = self.current_point
-        tgt_x, tgt_y = target
         
-        preview_segments = []
+        # Don't preview if same as current point
+        if target == self.current_point:
+            return []
         
-        dx = abs(tgt_x - curr_x)
-        dy = abs(tgt_y - curr_y)
+        # Create preview segments from current point to target
+        return self.create_manhattan_path(self.current_point, target)
+    
+    def create_manhattan_path(self, start, end):
+        """Create Manhattan path between two points"""
+        segments = []
+        curr_x, curr_y = start
+        end_x, end_y = end
         
+        dx = abs(end_x - curr_x)
+        dy = abs(end_y - curr_y)
+        
+        # Create L-shaped path
         if dx > 0.01 and dy > 0.01:
-            if self.routing_mode == 'H':
-                mid_point = (tgt_x, curr_y)
-                preview_segments.append({
-                    'type': 'horizontal',
-                    'start': self.current_point,
-                    'end': mid_point
-                })
-                preview_segments.append({
-                    'type': 'vertical',
-                    'start': mid_point,
-                    'end': target
-                })
-            else:
-                mid_point = (curr_x, tgt_y)
-                preview_segments.append({
-                    'type': 'vertical',
-                    'start': self.current_point,
-                    'end': mid_point
-                })
-                preview_segments.append({
-                    'type': 'horizontal',
-                    'start': mid_point,
-                    'end': target
-                })
-        elif dx > 0.01:
-            preview_segments.append({
+            # Both horizontal and vertical needed
+            # Default: horizontal first, then vertical
+            # (User can control by adding intermediate points)
+            
+            # Horizontal segment
+            h_end = (end_x, curr_y)
+            segments.append({
                 'type': 'horizontal',
-                'start': self.current_point,
-                'end': target
+                'start': (curr_x, curr_y),
+                'end': h_end
+            })
+            
+            # Vertical segment
+            segments.append({
+                'type': 'vertical',
+                'start': h_end,
+                'end': (end_x, end_y)
+            })
+        elif dx > 0.01:
+            # Only horizontal
+            segments.append({
+                'type': 'horizontal',
+                'start': (curr_x, curr_y),
+                'end': (end_x, end_y)
             })
         elif dy > 0.01:
-            preview_segments.append({
+            # Only vertical
+            segments.append({
                 'type': 'vertical',
-                'start': self.current_point,
-                'end': target
+                'start': (curr_x, curr_y),
+                'end': (end_x, end_y)
             })
         
-        return preview_segments
+        return segments
     
     def finish_route(self):
-        """Finaliza la ruta y retorna todos los segmentos"""
+        """Finish the route and return all segments"""
         result = self.segments.copy()
         self.segments = []
+        self.points = []
         self.current_point = None
-        self.routing_mode = 'H'
         return result
+    
+    def get_route_info(self):
+        """Get comprehensive route information"""
+        if len(self.points) < 2:
+            return None
+        
+        # Calculate total lengths
+        h_length = 0
+        v_length = 0
+        
+        for seg in self.segments:
+            if seg['type'] == 'horizontal':
+                h_length += abs(seg['end'][0] - seg['start'][0])
+            else:
+                v_length += abs(seg['end'][1] - seg['start'][1])
+        
+        # Get exit point and direction
+        start_point = self.points[0]
+        exit_point = self.points[-1] if self.points else start_point
+        
+        # Determine primary exit direction
+        exit_direction = self.determine_exit_direction(start_point, exit_point)
+        
+        return {
+            'points': self.points.copy(),
+            'segments': self.segments.copy(),
+            'h_length': h_length,
+            'v_length': v_length,
+            'exit_point': exit_point,
+            'exit_direction': exit_direction,
+            'start_point': start_point
+        }
+    
+    def determine_exit_direction(self, start, end):
+        """Determine primary exit direction"""
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        
+        # Based on larger displacement
+        if abs(dx) > abs(dy):
+            return 'right' if dx > 0 else 'left'
+        else:
+            return 'up' if dy < 0 else 'down'  # Note: canvas Y increases downward
+    
+    def get_current_segments(self):
+        """Get all current segments (for debugging)"""
+        return self.segments.copy()
+    
+    def get_points(self):
+        """Get all routing points"""
+        return self.points.copy()
+
 
 class AdvancedRoutingGUI:
     def __init__(self, root):
@@ -169,8 +186,8 @@ class AdvancedRoutingGUI:
         self.root.title("Advanced Gate Routing Designer - Manhattan Routing")
         
         # Array parameters
-        self.array_rows = 4
-        self.array_cols = 4
+        self.array_rows = 2
+        self.array_cols = 2
         self.dummy_mode = 'sides'  # 'none', 'sides', or 'full'
         
         # ====== CONFIGURABLE TRANSISTOR DIMENSIONS (µm) ======
@@ -192,6 +209,11 @@ class AdvancedRoutingGUI:
         self.pitch_x = self.transistor_width + 2 * self.guardring_spacing + self.guardring_width
         self.pitch_y = self.transistor_height + 2 * self.guardring_spacing + self.guardring_width
         
+        # Add routing configuration
+        self.exit_pitch = 1.0  # µm - Pitch between exit points
+        self.exit_alignment = 'auto'  # 'auto', 'top', 'bottom', 'left', 'right'
+        self.allow_multi_turn = True  # Allow multiple 90° turns
+
         # Metal widths
         self.metal3_width = 0.2  # µm
         
@@ -213,6 +235,17 @@ class AdvancedRoutingGUI:
         self.selected_segment = None
         self.mouse_start = None
         self.manhattan_router = None
+        self.routing_state = 'IDLE'  # IDLE, ROUTING, ADDING_POINTS
+        self.route_points = []        # Store waypoints during routing
+        self.temp_segments = []       # Store temporary visual segments
+
+        self.routing_active = False
+        self.current_route = []
+        self.last_point = None
+
+        self.gate_size = 0.15  
+        self.drain_source_size = 0.15
+        
         
         # Edit mode
         self.edit_mode = 'draw'
@@ -388,6 +421,40 @@ class AdvancedRoutingGUI:
         # Toolbar
         toolbar = ttk.Frame(main_frame)
         toolbar.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+
+        # Add routing configuration section
+        ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill='y', padx=10)
+        ttk.Label(toolbar, text="Exit:").pack(side=tk.LEFT, padx=5)
+        
+        # Exit alignment selector
+        self.exit_align_var = tk.StringVar(value='auto')
+        exit_frame = ttk.Frame(toolbar)
+        exit_frame.pack(side=tk.LEFT)
+        
+        ttk.Radiobutton(exit_frame, text="Auto", 
+                        variable=self.exit_align_var, 
+                        value='auto').pack(side=tk.LEFT)
+        ttk.Radiobutton(exit_frame, text="Top", 
+                        variable=self.exit_align_var, 
+                        value='top').pack(side=tk.LEFT)
+        ttk.Radiobutton(exit_frame, text="Right", 
+                        variable=self.exit_align_var, 
+                        value='right').pack(side=tk.LEFT)
+        ttk.Radiobutton(exit_frame, text="Bottom", 
+                        variable=self.exit_align_var, 
+                        value='bottom').pack(side=tk.LEFT)
+        ttk.Radiobutton(exit_frame, text="Left", 
+                        variable=self.exit_align_var, 
+                        value='left').pack(side=tk.LEFT)
+        
+        # Exit pitch control
+        ttk.Label(toolbar, text="Pitch:").pack(side=tk.LEFT, padx=5)
+        self.exit_pitch_var = tk.DoubleVar(value=1.0)
+        ttk.Spinbox(toolbar, from_=0.5, to=5.0, increment=0.1, width=6,
+                    textvariable=self.exit_pitch_var,
+                    command=self.update_exit_pitch).pack(side=tk.LEFT)
+        ttk.Label(toolbar, text="µm").pack(side=tk.LEFT)
+        
         
         # Manhattan routing indicator
         manhattan_label = ttk.Label(toolbar, text="MANHATTAN ROUTING", 
@@ -395,8 +462,7 @@ class AdvancedRoutingGUI:
         manhattan_label.pack(side=tk.LEFT, padx=10)
         
         ttk.Separator(toolbar, orient='vertical').pack(side=tk.LEFT, fill='y', padx=5)
-        
-        # NEW: Configuration button
+
         ttk.Button(toolbar, text="⚙ Configure", 
                 command=self.show_dimension_dialog).pack(side=tk.LEFT, padx=5)
         
@@ -509,7 +575,10 @@ class AdvancedRoutingGUI:
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
         self.canvas.bind("<Control-MouseWheel>", self.on_ctrl_mouse_wheel)
         self.canvas.bind("<Motion>", self.on_mouse_move)
-        
+
+        self.root.bind("<Escape>", self.on_key_press)
+
+            
         # Panel derecho
         right_panel = ttk.Frame(main_frame)
         right_panel.grid(row=1, column=1, sticky=(tk.N, tk.S), padx=5)
@@ -535,6 +604,9 @@ class AdvancedRoutingGUI:
                   command=self.generate_report).pack(fill=tk.X, pady=2)
         ttk.Button(action_frame, text="Copy Pattern Dict",
                 command=self.copy_pattern_dict).pack(fill=tk.X, pady=2)
+        ttk.Button(action_frame, text="📐 Align All Routes",
+          command=self.align_routes_final,
+          style='Accent.TButton').pack(fill=tk.X, pady=5)
         
         # Estadísticas
         stats_frame = ttk.LabelFrame(right_panel, text="Statistics", padding="10")
@@ -557,7 +629,12 @@ class AdvancedRoutingGUI:
         main_frame.rowconfigure(1, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
         canvas_frame.rowconfigure(0, weight=1)
-        
+    
+    def update_exit_pitch(self):
+        """Update exit pitch value"""
+        self.exit_pitch = self.exit_pitch_var.get()
+        print(f"Exit pitch set to: {self.exit_pitch} µm")
+
     def um_to_canvas(self, x_um, y_um):
         """Convierte coordenadas de micrómetros a pixels del canvas"""
         x = x_um * self.zoom_level + self.canvas_offset_x
@@ -700,25 +777,22 @@ class AdvancedRoutingGUI:
                                    anchor='e', tags="grid")
     
     def draw_transistor(self, t):
-        """Draw transistor with GUI naming convention"""
+        """Draw transistor with LARGER terminals for better visibility"""
         x, y = t['x'], t['y']
         
         # Convert to canvas
         x1, y1 = self.um_to_canvas(x, y)
         x2, y2 = self.um_to_canvas(x + self.transistor_width, 
-                                y + self.transistor_height)
+                                    y + self.transistor_height)
         
-        # Get device type if available
+        # Device type
         device_type = self.device_type_var.get() if hasattr(self, 'device_type_var') else 'nmos'
         
         # Color based on type and dummy status
         if t['is_dummy']:
             fill_color = self.colors['dummy']
         else:
-            if device_type == 'pmos':
-                fill_color = '#e0d0d0'  # Light pink for PMOS
-            else:
-                fill_color = self.colors['transistor']
+            fill_color = '#e0d0d0' if device_type == 'pmos' else self.colors['transistor']
         
         # Draw transistor rectangle
         rect = self.canvas.create_rectangle(x1, y1, x2, y2,
@@ -727,57 +801,52 @@ class AdvancedRoutingGUI:
                                         width=2,
                                         tags=f"transistor_{t['row']}_{t['col']}")
         
-        # Draw DRAIN (left)
+        # DRAIN (left) - TAMAÑO AUMENTADO
         drain_x = x + self.transistor_width * 0.2
         drain_y = y + self.transistor_height / 2
-        dx1, dy1 = self.um_to_canvas(drain_x - 0.05, drain_y - 0.05)
-        dx2, dy2 = self.um_to_canvas(drain_x + 0.05, drain_y + 0.05)
+        dx1, dy1 = self.um_to_canvas(drain_x - self.drain_source_size, 
+                                    drain_y - self.drain_source_size)
+        dx2, dy2 = self.um_to_canvas(drain_x + self.drain_source_size, 
+                                    drain_y + self.drain_source_size)
         self.canvas.create_oval(dx1, dy1, dx2, dy2,
-                            fill='#44ff44', outline='darkgreen',
+                            fill='#44ff44', outline='darkgreen', width=2,
                             tags=f"drain_{t['row']}_{t['col']}")
         
-        # Draw GATE (center - vertical line)
+        # GATE (center) - LÍNEA MÁS GRUESA Y VISIBLE
         gate_x = x + self.transistor_width / 2
         gate_color = '#4444ff' if device_type == 'pmos' else self.colors['gate']
-        gx1, gy1 = self.um_to_canvas(gate_x - 0.02, y + 0.1)
-        gx2, gy2 = self.um_to_canvas(gate_x + 0.02, y + self.transistor_height - 0.1)
+        gx1, gy1 = self.um_to_canvas(gate_x - self.gate_size, y + 0.1)
+        gx2, gy2 = self.um_to_canvas(gate_x + self.gate_size, y + self.transistor_height - 0.1)
         self.canvas.create_rectangle(gx1, gy1, gx2, gy2,
                                 fill=gate_color,
                                 outline='darkred' if device_type == 'nmos' else 'darkblue',
-                                width=1,
+                                width=3,  # Más grueso
                                 tags=f"gate_{t['row']}_{t['col']}")
         
-        # Draw SOURCE (right)
+        # SOURCE (right) - TAMAÑO AUMENTADO
         source_x = x + self.transistor_width * 0.8
         source_y = y + self.transistor_height / 2
-        sx1, sy1 = self.um_to_canvas(source_x - 0.05, source_y - 0.05)
-        sx2, sy2 = self.um_to_canvas(source_x + 0.05, source_y + 0.05)
+        sx1, sy1 = self.um_to_canvas(source_x - self.drain_source_size, 
+                                    source_y - self.drain_source_size)
+        sx2, sy2 = self.um_to_canvas(source_x + self.drain_source_size, 
+                                    source_y + self.drain_source_size)
         self.canvas.create_oval(sx1, sy1, sx2, sy2,
-                            fill='#4444ff', outline='darkblue',
+                            fill='#4444ff', outline='darkblue', width=2,
                             tags=f"source_{t['row']}_{t['col']}")
         
-        # Labels with GUI naming convention (Phase 3)
+        # Label
         if t['is_dummy']:
             label = f"D[{t['row']},{t['col']}]"
         else:
-            # Use GUI coordinates for active transistors
             active_row = t['active_row']
             active_col = t['active_col']
-            
             if active_row >= 0 and active_col >= 0:
-                # Primary label uses G for GUI coordinates
                 label = f"G[{active_row},{active_col}]"
-                
-                # Optional: show KLayout mapping for debugging
-                if getattr(self, 'show_klayout_mapping', False):
-                    klayout_row = (self.array_rows - 1) - active_row
-                    label += f"\n(K[{klayout_row},{active_col}])"
             else:
                 label = "ERR"
         
-        # Position label
         lx, ly = self.um_to_canvas(x + self.transistor_width/2, y + self.transistor_height + 0.2)
-        self.canvas.create_text(lx, ly, text=label, font=('Arial', 8),
+        self.canvas.create_text(lx, ly, text=label, font=('Arial', 10, 'bold'),
                             anchor='n', tags=f"label_{t['row']}_{t['col']}")
 
     def draw_direction_indicators(self):
@@ -831,13 +900,14 @@ class AdvancedRoutingGUI:
         segment['canvas_id'] = line
     
     def find_transistor_at(self, x_um, y_um):
-        """Encuentra el transistor en las coordenadas dadas (gate)"""
+        """Find transistor at coordinates - with LARGER hit area"""
         for t in self.transistors.values():
             gate_x = t['x'] + self.transistor_width / 2
             gate_y = t['y'] + self.transistor_height / 2
             
-            if (abs(x_um - gate_x) < 0.2 and 
-                abs(y_um - gate_y) < 0.2):
+            # Área de click más grande
+            if (abs(x_um - gate_x) < 0.3 and  # Aumentado de 0.2 a 0.3
+                abs(y_um - gate_y) < 0.3):
                 return t
         return None
     
@@ -875,38 +945,245 @@ class AdvancedRoutingGUI:
         return math.sqrt((px - cx)**2 + (py - cy)**2)
     
     def on_mouse_down(self, event):
-        """Manejo del click del mouse"""
+        """STATE 1: Click en gate para empezar ruteo"""
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
         x_um, y_um = self.canvas_to_um(x, y)
         
-        mode = self.mode_var.get()
-        
-        if mode == 'draw':
+        if not self.routing_active:
+            # Buscar transistor
             t = self.find_transistor_at(x_um, y_um)
+            
             if t and not t['is_dummy']:
+                # INICIAR RUTEO
+                self.routing_active = True
                 self.selected_transistor = t
-                self.drawing = True
+                self.current_route = []
                 
-                # Iniciar router Manhattan
-                self.manhattan_router = StrictManhattanRouter()
-                # Comenzar en el centro del gate
+                # Punto inicial: centro del gate
                 gate_x = t['x'] + self.transistor_width / 2
                 gate_y = t['y'] + self.transistor_height / 2
-                self.manhattan_router.start_route(gate_x, gate_y)
+                self.last_point = (gate_x, gate_y)
                 
+                # Resaltar gate
                 gate_tag = f"gate_{t['row']}_{t['col']}"
-                self.canvas.itemconfig(gate_tag, fill=self.colors['gate_selected'])
+                self.canvas.itemconfig(gate_tag, fill='#ff8800', width=4)
+                
+                # Mostrar estado
+                self.show_status(f"Ruteando desde G[{t['active_row']},{t['active_col']}] - Click para agregar segmentos, ESC para terminar")
         
-        elif mode == 'delete':
-            segment = self.find_segment_at(x_um, y_um)
-            if segment:
-                self.delete_segment(segment)
+        else:
+            # STATE 2: Agregar segmento en línea recta (Manhattan)
+            if self.last_point:
+                # Snap a grid
+                target_x = round(x_um / 0.05) * 0.05
+                target_y = round(y_um / 0.05) * 0.05
+                
+                # Crear segmento Manhattan
+                segments = self.create_manhattan_segments(self.last_point, (target_x, target_y))
+                
+                for seg in segments:
+                    # Guardar y dibujar segmento
+                    segment_data = {
+                        'id': len(self.routing_segments),
+                        'transistor': (self.selected_transistor['row'], self.selected_transistor['col']),
+                        'x1': seg['x1'],
+                        'y1': seg['y1'],
+                        'x2': seg['x2'],
+                        'y2': seg['y2'],
+                        'type': seg['type']
+                    }
+                    self.routing_segments.append(segment_data)
+                    self.current_route.append(segment_data)
+                    self.draw_segment(segment_data)
+                    
+                    # Actualizar último punto
+                    self.last_point = (seg['x2'], seg['y2'])
+
+
+    def show_status(self, message):
+        """Mostrar mensaje de estado"""
+        print(f"Status: {message}")
+        if hasattr(self, 'report_text'):
+            self.report_text.insert(tk.END, f"\n{message}")
+            self.report_text.see(tk.END)
+
+    def create_manhattan_segments(self, start, end):
+        """Crear segmentos Manhattan entre dos puntos"""
+        x1, y1 = start
+        x2, y2 = end
+        segments = []
         
-        self.mouse_start = (x, y)
+        dx = abs(x2 - x1)
+        dy = abs(y2 - y1)
+        
+        if dx > 0.01 and dy > 0.01:
+            # Necesitamos 2 segmentos (L shape)
+            # Horizontal primero, luego vertical
+            segments.append({
+                'x1': x1, 'y1': y1,
+                'x2': x2, 'y2': y1,
+                'type': 'horizontal'
+            })
+            segments.append({
+                'x1': x2, 'y1': y1,
+                'x2': x2, 'y2': y2,
+                'type': 'vertical'
+            })
+        elif dx > 0.01:
+            # Solo horizontal
+            segments.append({
+                'x1': x1, 'y1': y1,
+                'x2': x2, 'y2': y2,
+                'type': 'horizontal'
+            })
+        elif dy > 0.01:
+            # Solo vertical
+            segments.append({
+                'x1': x1, 'y1': y1,
+                'x2': x2, 'y2': y2,
+                'type': 'vertical'
+            })
+        
+        return segments
     
+    def on_key_press(self, event):
+        """STATE 3: ESC para terminar ruteo actual"""
+        if event.keysym == 'Escape' and self.routing_active:
+            # Terminar ruteo actual
+            self.routing_active = False
+            
+            if self.selected_transistor:
+                # Marcar como ruteado
+                self.selected_transistor['routed'] = True
+                
+                # Restaurar color del gate
+                gate_tag = f"gate_{self.selected_transistor['row']}_{self.selected_transistor['col']}"
+                self.canvas.itemconfig(gate_tag, fill=self.colors['gate'], width=3)
+                
+                # AUTO-CLONAR si es columna 0
+                if self.selected_transistor['active_col'] == 0 and self.auto_clone_enabled:
+                    self.auto_clone_to_row()
+                
+                self.show_status(f"Ruteo completado - {len(self.current_route)} segmentos")
+            
+            # Limpiar estado
+            self.selected_transistor = None
+            self.current_route = []
+            self.last_point = None
+            self.update_stats()
+
+
+    def auto_clone_to_row(self):
+        """Clonar patrón de columna 0 a las demás columnas de la misma fila"""
+        if not self.selected_transistor:
+            return
+        
+        source_row = self.selected_transistor['active_row']
+        source_key = (self.selected_transistor['row'], self.selected_transistor['col'])
+        
+        # Obtener segmentos del transistor fuente
+        source_segments = [s for s in self.routing_segments if s['transistor'] == source_key]
+        
+        if not source_segments:
+            return
+        
+        # Offset del gate fuente
+        source_gate_x = self.selected_transistor['x'] + self.transistor_width / 2
+        
+        cloned_count = 0
+        
+        # Clonar a todas las columnas de la misma fila
+        for t_key, t_info in self.transistors.items():
+            if (t_info['active_row'] == source_row and 
+                t_info['active_col'] > 0 and  # No columna 0
+                not t_info['is_dummy'] and
+                not t_info.get('routed', False)):
+                
+                # Calcular offset X
+                target_gate_x = t_info['x'] + self.transistor_width / 2
+                x_offset = target_gate_x - source_gate_x
+                
+                # Copiar segmentos con offset X solamente
+                for seg in source_segments:
+                    new_segment = {
+                        'id': len(self.routing_segments),
+                        'transistor': t_key,
+                        'x1': seg['x1'] + x_offset,
+                        'y1': seg['y1'],  # Mantener Y igual
+                        'x2': seg['x2'] + x_offset,
+                        'y2': seg['y2'],  # Mantener Y igual
+                        'type': seg['type']
+                    }
+                    self.routing_segments.append(new_segment)
+                
+                t_info['routed'] = True
+                cloned_count += 1
+        
+        if cloned_count > 0:
+            self.draw_canvas()
+            self.update_stats()
+            self.show_status(f"Patrón clonado a {cloned_count} transistores")
+
+
+    def draw_temp_segment(self, segment):
+        """Draw a temporary segment during routing"""
+        # Handle segment format from EnhancedManhattanRouter
+        if 'start' in segment and 'end' in segment:
+            # New format from router
+            x1, y1 = self.um_to_canvas(*segment['start'])
+            x2, y2 = self.um_to_canvas(*segment['end'])
+        else:
+            # Legacy format
+            x1, y1 = self.um_to_canvas(segment.get('x1', 0), segment.get('y1', 0))
+            x2, y2 = self.um_to_canvas(segment.get('x2', 0), segment.get('y2', 0))
+        
+        # Draw the temporary line
+        line = self.canvas.create_line(
+            x1, y1, x2, y2,
+            fill=self.colors.get('routing', '#0066ff'),
+            width=max(2, int(self.metal3_width * self.zoom_level)),
+            capstyle='projecting',
+            tags="temp_route"
+        )
+        return line
+
+    def delete_segment_section(self, segment):
+        """Delete a section of routing (between waypoints)"""
+        t_key = segment['transistor']
+        
+        # Find all segments for this transistor
+        t_segments = [s for s in self.routing_segments 
+                    if s['transistor'] == t_key]
+        
+        if not t_segments:
+            return
+        
+        # Find the clicked segment index
+        clicked_idx = next((i for i, s in enumerate(t_segments) 
+                        if s['id'] == segment['id']), None)
+        
+        if clicked_idx is not None:
+            # Delete from this segment to the end
+            segments_to_remove = t_segments[clicked_idx:]
+            
+            for seg in segments_to_remove:
+                self.routing_segments.remove(seg)
+            
+            # Update routed status if no segments left
+            if not any(s['transistor'] == t_key for s in self.routing_segments):
+                self.transistors[t_key]['routed'] = False
+            
+            self.draw_canvas()
+            self.update_stats()
+
+    def on_double_click(self, event):
+        """Finish route on double-click"""
+        if self.routing_state == 'ROUTING':
+            self.finish_current_route()
+
     def on_mouse_drag(self, event):
-        """Manejo del arrastre con ruteo Manhattan estricto"""
+        """Handle mouse drag with preview"""
         if not self.drawing or not self.selected_transistor:
             return
         
@@ -914,28 +1191,31 @@ class AdvancedRoutingGUI:
         y = self.canvas.canvasy(event.y)
         x_um, y_um = self.canvas_to_um(x, y)
         
-        # Obtener segmentos de preview
-        preview_segments = self.manhattan_router.get_preview_segments(x_um, y_um)
-        
-        # Dibujar preview
-        self.canvas.delete("preview")
-        
-        for seg in preview_segments:
-            x1, y1 = self.um_to_canvas(*seg['start'])
-            x2, y2 = self.um_to_canvas(*seg['end'])
+        if self.manhattan_router:
+            # Get preview segments
+            preview_segments = self.manhattan_router.get_preview_segments(x_um, y_um)
             
-            self.canvas.create_line(x1, y1, x2, y2,
-                                   fill=self.colors['routing_preview'],
-                                   width=max(2, int(self.metal3_width * self.zoom_level)),
-                                   capstyle='projecting',
-                                   tags="preview")
-        
-        # Mostrar modo actual
-        mode_text = "Mode: " + ("Horizontal" if self.manhattan_router.routing_mode == 'H' else "Vertical")
-        self.coord_label.config(text=f"X: {x_um:.2f} µm\nY: {y_um:.2f} µm\n{mode_text}")
-    
+            # Clear old preview
+            self.canvas.delete("preview")
+            
+            # Draw preview segments
+            for seg in preview_segments:
+                x1, y1 = self.um_to_canvas(*seg['start'])
+                x2, y2 = self.um_to_canvas(*seg['end'])
+                
+                self.canvas.create_line(
+                    x1, y1, x2, y2,
+                    fill=self.colors.get('routing_preview', '#88ccff'),
+                    width=max(2, int(self.metal3_width * self.zoom_level)),
+                    capstyle='projecting',
+                    tags="preview"
+                )
+            
+            # Update coordinates display
+            self.coord_label.config(text=f"X: {x_um:.2f} µm\nY: {y_um:.2f} µm")
+
     def on_mouse_up(self, event):
-        """Confirm Manhattan routing and apply cloning if column 0"""
+        """Complete route with proper segment handling"""
         if not self.drawing or not self.selected_transistor:
             return
         
@@ -943,29 +1223,28 @@ class AdvancedRoutingGUI:
         self.canvas.delete("preview")
         
         if self.manhattan_router:
-            # Add final point
             x = self.canvas.canvasx(event.x)
             y = self.canvas.canvasy(event.y)
             x_um, y_um = self.canvas_to_um(x, y)
             
+            # Add final point
             self.manhattan_router.add_point(x_um, y_um)
             
             # Get all segments
             segments = self.manhattan_router.finish_route()
             
             if segments:
-                # Convert to GUI format
+                # Store segments
                 t_key = (self.selected_transistor['row'], self.selected_transistor['col'])
                 
                 for seg in segments:
-                    x1, y1 = seg['start']
-                    x2, y2 = seg['end']
-                    
                     segment_data = {
                         'id': len(self.routing_segments),
                         'transistor': t_key,
-                        'x1': x1, 'y1': y1,
-                        'x2': x2, 'y2': y2,
+                        'x1': seg['start'][0],
+                        'y1': seg['start'][1],
+                        'x2': seg['end'][0],
+                        'y2': seg['end'][1],
                         'type': seg['type']
                     }
                     
@@ -974,11 +1253,10 @@ class AdvancedRoutingGUI:
                 
                 self.selected_transistor['routed'] = True
                 
-                # FIXED: Auto-clone if it's column 0 (considering dummies)
+                # Auto-clone if column 0 (NO MIRROR)
                 active_col = self.selected_transistor['active_col']
                 if active_col == 0 and self.auto_clone_enabled:
-                    # Pass the actual row/col coordinates, not active ones
-                    self.clone_pattern_to_row(
+                    self.clone_pattern_to_row_no_mirror(
                         self.selected_transistor['row'],
                         self.selected_transistor['col']
                     )
@@ -992,6 +1270,95 @@ class AdvancedRoutingGUI:
             self.canvas.itemconfig(gate_tag, fill=self.colors['gate'])
         
         self.selected_transistor = None
+        self.update_stats()
+
+    def on_mouse_click(self, event):
+        """
+        Alternative: Support multi-click routing for complex paths
+        Left click: Add point
+        Right click: Finish route
+        """
+        if event.num == 1:  # Left click
+            x = self.canvas.canvasx(event.x)
+            y = self.canvas.canvasy(event.y)
+            x_um, y_um = self.canvas_to_um(x, y)
+            
+            if not self.drawing:
+                # Start new route
+                t = self.find_transistor_at(x_um, y_um)
+                if t and not t['is_dummy']:
+                    self.selected_transistor = t
+                    self.drawing = True
+                    
+                    self.manhattan_router = EnhancedManhattanRouter()
+                    gate_x = t['x'] + self.transistor_width / 2
+                    gate_y = t['y'] + self.transistor_height / 2
+                    self.manhattan_router.start_route(gate_x, gate_y)
+                    
+                    gate_tag = f"gate_{t['row']}_{t['col']}"
+                    self.canvas.itemconfig(gate_tag, fill=self.colors['gate_selected'])
+            else:
+                # Add intermediate point
+                if self.manhattan_router:
+                    segments_added = self.manhattan_router.add_point(x_um, y_um)
+                    
+                    # Draw the confirmed segments
+                    for seg in segments_added:
+                        x1, y1 = self.um_to_canvas(*seg['start'])
+                        x2, y2 = self.um_to_canvas(*seg['end'])
+                        
+                        self.canvas.create_line(
+                            x1, y1, x2, y2,
+                            fill=self.colors.get('routing', '#0066ff'),
+                            width=max(2, int(self.metal3_width * self.zoom_level)),
+                            capstyle='projecting',
+                            tags=f"temp_route_{len(self.routing_segments)}"
+                        )
+        
+        elif event.num == 3:  # Right click
+            if self.drawing:
+                # Finish current route
+                self.finish_current_route()
+
+    def finish_current_route(self):
+        """Finish the current route and store it"""
+        if not self.drawing or not self.manhattan_router:
+            return
+        
+        segments = self.manhattan_router.finish_route()
+        
+        if segments:
+            t_key = (self.selected_transistor['row'], self.selected_transistor['col'])
+            
+            # Clear temporary drawings
+            self.canvas.delete("temp_route_*")
+            
+            # Store final segments
+            for seg in segments:
+                segment_data = {
+                    'id': len(self.routing_segments),
+                    'transistor': t_key,
+                    'x1': seg['start'][0],
+                    'y1': seg['start'][1],
+                    'x2': seg['end'][0],
+                    'y2': seg['end'][1],
+                    'type': seg['type']
+                }
+                self.routing_segments.append(segment_data)
+                self.draw_segment(segment_data)
+            
+            self.selected_transistor['routed'] = True
+        
+        # Cleanup
+        self.drawing = False
+        self.manhattan_router = None
+        self.canvas.delete("preview")
+        
+        if self.selected_transistor:
+            gate_tag = f"gate_{self.selected_transistor['row']}_{self.selected_transistor['col']}"
+            self.canvas.itemconfig(gate_tag, fill=self.colors['gate'])
+            self.selected_transistor = None
+        
         self.update_stats()
 
 
@@ -1031,6 +1398,40 @@ class AdvancedRoutingGUI:
                 self.draw_canvas()
                 self.update_stats()
     
+    def on_right_click(self, event):
+        """Click derecho para ELIMINAR segmento"""
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        x_um, y_um = self.canvas_to_um(x, y)
+        
+        # Buscar segmento más cercano
+        segment = self.find_segment_at(x_um, y_um)
+        
+        if segment:
+            # Eliminar este segmento y todos los posteriores del mismo transistor
+            t_key = segment['transistor']
+            
+            # Encontrar índice del segmento
+            seg_index = self.routing_segments.index(segment)
+            
+            # Eliminar este y los siguientes del mismo transistor
+            segments_to_remove = []
+            for i in range(seg_index, len(self.routing_segments)):
+                if self.routing_segments[i]['transistor'] == t_key:
+                    segments_to_remove.append(self.routing_segments[i])
+            
+            for seg in segments_to_remove:
+                self.routing_segments.remove(seg)
+            
+            # Actualizar estado del transistor
+            if not any(s['transistor'] == t_key for s in self.routing_segments):
+                if t_key in self.transistors:
+                    self.transistors[t_key]['routed'] = False
+            
+            self.draw_canvas()
+            self.update_stats()
+            self.show_status(f"Eliminados {len(segments_to_remove)} segmentos")
+
     def on_right_click(self, event):
         """Manejo del click derecho - eliminar última ruta o mostrar menú"""
         # Si estamos dibujando, cancelar
@@ -1100,14 +1501,36 @@ class AdvancedRoutingGUI:
         menu.post(event.x_root, event.y_root)
 
     def on_mouse_move(self, event):
-        """Actualiza las coordenadas del mouse"""
+        """Mostrar preview del segmento mientras mueves el mouse"""
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
         x_um, y_um = self.canvas_to_um(x, y)
         
-        # Si no estamos dibujando, mostrar solo coordenadas
-        if not self.drawing or not self.manhattan_router:
-            self.coord_label.config(text=f"X: {x_um:.2f} µm\nY: {y_um:.2f} µm")
+        # Actualizar coordenadas
+        self.coord_label.config(text=f"X: {x_um:.2f} µm\nY: {y_um:.2f} µm")
+        
+        # Mostrar preview si estamos ruteando
+        if self.routing_active and self.last_point:
+            self.canvas.delete("preview")
+            
+            # Snap a grid
+            target_x = round(x_um / 0.05) * 0.05
+            target_y = round(y_um / 0.05) * 0.05
+            
+            # Preview de segmentos Manhattan
+            segments = self.create_manhattan_segments(self.last_point, (target_x, target_y))
+            
+            for seg in segments:
+                x1, y1 = self.um_to_canvas(seg['x1'], seg['y1'])
+                x2, y2 = self.um_to_canvas(seg['x2'], seg['y2'])
+                
+                self.canvas.create_line(
+                    x1, y1, x2, y2,
+                    fill='#88ccff',
+                    width=max(2, int(self.metal3_width * self.zoom_level)),
+                    dash=(5, 5),
+                    tags="preview"
+                )
     
     def on_mouse_wheel(self, event):
         """Zoom con la rueda del mouse"""
@@ -1209,51 +1632,61 @@ class AdvancedRoutingGUI:
         self.stats_label.config(text=f"Segments: {total_segments}\nRouted: {routed}/{total}")
     
     def save_pattern(self):
-        """Save pattern with dimension configuration"""
+        """
+        Guarda con coordenadas activas directamente
+        """
         filename = filedialog.asksaveasfilename(
             defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-            initialfile=f"routing_pattern_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filetypes=[("JSON files", "*.json")]
         )
         
         if filename:
             pattern_dict = self.generate_pattern_dict()
             
-            # Convert tuples to strings for JSON
+            # Convertir a JSON con claves string
             json_pattern = {}
-            for (row, col), data in pattern_dict.items():
-                key = f"{row},{col}"
-                json_pattern[key] = data
+            for key, data in pattern_dict.items():
+                if isinstance(key, tuple):
+                    row, col = key
+                    # Usar coordenadas ACTIVAS como clave
+                    key_str = f"{row},{col}"
+                else:
+                    key_str = str(key)
+                json_pattern[key_str] = data
+            
+            print("\n=== GUARDANDO PATRÓN (CORREGIDO) ===")
+            print("Claves almacenadas (primeras 4):")
+            for i, key in enumerate(list(json_pattern.keys())[:4]):
+                data = json_pattern[key]
+                print(f"  '{key}' -> GUI[{data.get('gui_row', '?')},{data.get('gui_col', '?')}]")
+            print("=" * 50)
             
             pattern_data = {
                 'metadata': {
                     'array_rows': self.array_rows,
                     'array_cols': self.array_cols,
-                    'dummy_mode': self.dummy_mode_var.get(),  # Changed from has_dummies
-                    'device_type': self.device_type_var.get() if hasattr(self, 'device_type_var') else 'nmos',
+                    'dummy_mode': self.dummy_mode_var.get(),
+                    'device_type': getattr(self, 'device_type_var', tk.StringVar(value='nmos')).get(),
                     'transistor_W': self.transistor_W,
                     'transistor_L': self.transistor_L,
                     'guardring_spacing': self.guardring_spacing,
-                    'guardring_width': self.guardring_width,
                     'pitch_x': self.pitch_x,
                     'pitch_y': self.pitch_y,
-                    'timestamp': datetime.now().isoformat()
+                    'timestamp': datetime.now().isoformat(),
+                    'coordinate_system': 'active_no_flip',  # Marcador importante
+                    'version': '3.0_fixed'
                 },
                 'pattern_data': json_pattern
             }
             
+            # Guardar ambos archivos
             with open(filename, 'w') as f:
                 json.dump(pattern_data, f, indent=2)
             
-            # Also save as temp_pattern.json for immediate use
             with open('temp_pattern.json', 'w') as f:
                 json.dump(pattern_data, f, indent=2)
             
-            messagebox.showinfo("Save Pattern", 
-                            f"Pattern saved to {filename}\n"
-                            f"Configuration: W={self.transistor_W}µm, L={self.transistor_L}µm\n"
-                            f"Dummy mode: {self.dummy_mode_var.get()}")
-            
+
     def load_pattern(self):
         """Load pattern and apply dimension configuration"""
         filename = filedialog.askopenfilename(
@@ -1430,12 +1863,16 @@ class AdvancedRoutingGUI:
 
     def generate_pattern_dict(self):
         """
-        Generate pattern dictionary from Manhattan segments
-        FIXED: Ensure correct direction mapping for all rows
+        Generate pattern dict - VERSION CORREGIDA
+        Almacena con coordenadas ACTIVAS directamente, SIN inversión
         """
         pattern_dict = {}
         
-        # Group segments by transistor
+        print("\n=== GENERANDO PATRÓN (COORDENADAS ACTIVAS) ===")
+        print(f"Array: {self.array_rows}x{self.array_cols}")
+        print(f"Dummy mode: {self.dummy_mode_var.get()}")
+        
+        # Agrupar segmentos por transistor
         transistor_routes = {}
         for segment in self.routing_segments:
             t_key = segment['transistor']
@@ -1443,85 +1880,85 @@ class AdvancedRoutingGUI:
                 transistor_routes[t_key] = []
             transistor_routes[t_key].append(segment)
         
-        # Analyze each transistor
+        # Procesar cada transistor
         for t_key in sorted(transistor_routes.keys()):
-            row, col = t_key
             segments = transistor_routes[t_key]
             
-            if not segments or self.transistors[t_key].get('is_dummy', False):
+            if not segments:
                 continue
-            
+                
             t = self.transistors[t_key]
             
-            # Gate center
-            gate_x = t['x'] + self.transistor_width / 2
-            gate_y = t['y'] + self.transistor_height / 2
-            
-            # Find start point (closest to gate)
-            min_dist = float('inf')
-            start_point = None
-            
-            for seg in segments:
-                dist = math.sqrt((seg['x1'] - gate_x)**2 + (seg['y1'] - gate_y)**2)
-                if dist < min_dist:
-                    min_dist = dist
-                    start_point = (seg['x1'], seg['y1'])
-            
-            if not start_point:
+            if t.get('is_dummy', False):
                 continue
             
-            # Offset from gate center
-            offset_y = start_point[1] - gate_y
-            
-            # Calculate H and V lengths
-            h_length = 0
-            v_length = 0
-            
-            # Find the endpoint furthest from gate
-            max_dist = 0
-            end_point = start_point
-            
-            for seg in segments:
-                if seg['type'] == 'horizontal':
-                    h_length += abs(seg['x2'] - seg['x1'])
-                else:
-                    v_length += abs(seg['y2'] - seg['y1'])
-                
-                # Check both endpoints
-                for point in [(seg['x1'], seg['y1']), (seg['x2'], seg['y2'])]:
-                    dist = math.sqrt((point[0] - gate_x)**2 + (point[1] - gate_y)**2)
-                    if dist > max_dist:
-                        max_dist = dist
-                        end_point = point
-            
-            # Determine direction for KLayout
-            # FIXED: Use consistent logic with analyze_route_pattern
+            # Obtener coordenadas ACTIVAS (no físicas)
             active_row = t['active_row']
             active_col = t['active_col']
             
-            # In GUI canvas coordinates (Y increases downward):
-            # - If end_point Y < gate Y: route goes upward visually
-            # - If end_point Y > gate Y: route goes downward visually
-            goes_up_in_gui = end_point[1] < gate_y
+            if active_row < 0 or active_col < 0:
+                continue
             
-            # Map to KLayout coordinates
-            klayout_row = (self.array_rows - 1) - active_row
+            # Centro del gate
+            gate_x = t['x'] + self.transistor_width / 2
+            gate_y = t['y'] + self.transistor_height / 2
             
-            # IMPORTANT: Keep the visual direction consistent
-            # What goes "up" in GUI should go "up" in KLayout
-            pattern_dict[(klayout_row, active_col)] = {
-                'offset_y': round(offset_y, 2),
-                'h_length': round(h_length, 2),
-                'v_length': round(v_length, 2),
-                'goes_up': goes_up_in_gui  # Keep GUI visual direction
+            # Construir lista de puntos de ruta
+            route_points = []
+            route_points.append({'x': 0, 'y': 0})  # Comenzar en el gate
+            
+            visited = set()
+            visited.add((0, 0))
+            
+            for seg in segments:
+                # Calcular posición relativa desde el gate
+                rel_x = round(seg['x2'] - gate_x, 2)
+                rel_y = round(seg['y2'] - gate_y, 2)
+                
+                point_key = (rel_x, rel_y)
+                if point_key not in visited:
+                    route_points.append({'x': rel_x, 'y': rel_y})
+                    visited.add(point_key)
+            
+            # ¡¡¡CRÍTICO!!!
+            # Almacenar con coordenadas ACTIVAS directamente
+            # NO INVERTIR, NO TRANSFORMAR, USAR TAL CUAL
+            pattern_dict[(active_row, active_col)] = {
+                'route_points': route_points,
+                'gui_row': active_row,  # Para referencia/debug
+                'gui_col': active_col   # Para referencia/debug
             }
             
-            # Debug output
-            direction = "UP" if goes_up_in_gui else "DOWN"
-            print(f"  Pattern for GUI[{active_row},{active_col}] → KL[{klayout_row},{active_col}]: {direction}")
+            print(f"  Almacenando en ACTIVE[{active_row},{active_col}] - {len(route_points)} puntos")
+        
+        print(f"Total patrones: {len(pattern_dict)}")
+        print("=" * 50)
         
         return pattern_dict
 
+
+    def calculate_total_length(self, segments):
+        """Calculate total route length"""
+        total = 0
+        for seg in segments:
+            if seg['type'] == 'horizontal':
+                total += abs(seg['x2'] - seg['x1'])
+            else:
+                total += abs(seg['y2'] - seg['y1'])
+        return round(total, 2)
+    
+    def detect_route_direction(self, segments):
+        """Detect exit direction for a specific route"""
+        if not segments:
+            return 'unknown'
+        
+        last_seg = segments[-1]
+        
+        # Check last segment direction
+        if last_seg['type'] == 'vertical':
+            return 'up' if last_seg['y2'] < last_seg['y1'] else 'down'
+        else:
+            return 'right' if last_seg['x2'] > last_seg['x1'] else 'left'
 
     def copy_pattern_dict(self):
         """Copia el diccionario pattern_data al portapapeles"""
@@ -1573,75 +2010,49 @@ class AdvancedRoutingGUI:
             self.report_text.insert(tk.END, "\n✗ Auto-cloning DISABLED\n")
 
 
-    def clone_pattern_to_row(self, source_row, source_col):
-        """
-        Clone the pattern from source transistor to all other transistors in the same row
-        """
+    def clone_pattern_to_row_no_mirror(self, source_row, source_col):
+        """Clone pattern WITHOUT mirror effect - exact copy"""
         if not self.auto_clone_enabled:
             return
         
-        # Get device type
-        device_type = self.device_type_var.get()
-
-        # Get source pattern using actual coordinates
-        source_segments = []
-        source_key = (source_row, source_col)
-        
-        for segment in self.routing_segments:
-            if segment['transistor'] == source_key:
-                source_segments.append(segment)
+        source_segments = [s for s in self.routing_segments 
+                        if s['transistor'] == (source_row, source_col)]
         
         if not source_segments:
-            print(f"No segments found for source [{source_row},{source_col}]")
             return
         
-        print(f"\nCloning pattern from transistor [{source_row},{source_col}]")
-        
-        # Analyze the source pattern
-        source_info = self.analyze_route_pattern(source_segments)
-        if not source_info:
-            return
-        
-        # Get the source transistor's active coordinates
         source_t = self.transistors[(source_row, source_col)]
         source_active_row = source_t['active_row']
         
-        # Clone to other columns in the same row
-        cloned_count = 0
-        
-        # Iterate through all transistors to find those in the same active row
+        # Clone to all other columns in same row
         for t_key, t_info in self.transistors.items():
-            # Skip if it's not in the same active row
-            if t_info['active_row'] != source_active_row:
-                continue
-            
-            # Skip the source transistor itself
-            if t_key == source_key:
-                continue
-            
-            # Skip dummy transistors
-            if t_info['is_dummy']:
-                continue
-            
-            # Skip if already routed
-            if any(s['transistor'] == t_key for s in self.routing_segments):
-                print(f"  Skipping [{t_key[0]},{t_key[1]}] - already routed")
-                continue
-            
-            # Clone the pattern
-            print(f"  Cloning to [{t_key[0]},{t_key[1]}] (active: [{t_info['active_row']},{t_info['active_col']}])")
-            self.create_cloned_route(t_key, source_info, t_info['active_col'])
-            cloned_count += 1
+            if (t_info['active_row'] == source_active_row and 
+                t_key != (source_row, source_col) and 
+                not t_info['is_dummy'] and 
+                not t_info.get('routed', False)):
+                
+                # Calculate X offset only (no mirror)
+                source_gate_x = source_t['x'] + self.transistor_width / 2
+                target_gate_x = t_info['x'] + self.transistor_width / 2
+                x_offset = target_gate_x - source_gate_x
+                
+                # Copy segments with X offset only
+                for seg in source_segments:
+                    new_segment = {
+                        'id': len(self.routing_segments),
+                        'transistor': t_key,
+                        'x1': seg['x1'] + x_offset,
+                        'y1': seg['y1'],  # Keep same Y
+                        'x2': seg['x2'] + x_offset,
+                        'y2': seg['y2'],  # Keep same Y
+                        'type': seg['type']
+                    }
+                    self.routing_segments.append(new_segment)
+                
+                t_info['routed'] = True
         
-        if cloned_count > 0:
-            self.draw_canvas()
-            self.update_stats()
-            self.report_text.insert(tk.END, 
-                f"✓ Cloned pattern to {cloned_count} transistors in row {source_active_row}\n")
-            print(f"✓ Successfully cloned to {cloned_count} transistors")
-        else:
-            print("  No transistors to clone to")
-
+        self.draw_canvas()
+        self.update_stats()
 
     def analyze_route_pattern(self, segments):
         """
@@ -1809,7 +2220,455 @@ class AdvancedRoutingGUI:
         direction = "UP" if pattern_info['goes_up'] else "DOWN"
         print(f"    Created route for T[{active_row},{active_col}]: dir={direction}, v_len={pattern_info['v_length']:.2f}")
 
+    def align_exit_points(self):
+        """
+        Align all exit points with uniform pitch
+        Call this after all routing is complete
+        """
+        exit_direction = self.exit_align_var.get()
+        
+        if exit_direction == 'auto':
+            # Determine from majority of routes
+            exit_direction = self.detect_exit_direction()
+        
+        # Group routes by row
+        routes_by_row = {}
+        for seg in self.routing_segments:
+            t_key = seg['transistor']
+            if t_key not in routes_by_row:
+                routes_by_row[t_key] = []
+            routes_by_row[t_key].append(seg)
+        
+        # Calculate aligned positions
+        pitch = self.exit_pitch
+        active_routes = []
+        
+        for t_key, segments in routes_by_row.items():
+            t = self.transistors[t_key]
+            if not t['is_dummy']:
+                # Find exit point (last segment endpoint)
+                last_seg = segments[-1]
+                exit_x = last_seg['x2']
+                exit_y = last_seg['y2']
+                
+                active_routes.append({
+                    'transistor': t_key,
+                    'active_row': t['active_row'],
+                    'active_col': t['active_col'],
+                    'exit_x': exit_x,
+                    'exit_y': exit_y,
+                    'segments': segments
+                })
+        
+        # Sort by position and assign aligned coordinates
+        if exit_direction in ['top', 'bottom']:
+            # Sort by column, align in X with pitch
+            active_routes.sort(key=lambda r: (r['active_row'], r['active_col']))
+            
+            # Find common Y coordinate
+            if exit_direction == 'top':
+                common_y = min(r['exit_y'] for r in active_routes)
+            else:
+                common_y = max(r['exit_y'] for r in active_routes)
+            
+            # Assign X positions with pitch
+            start_x = min(r['exit_x'] for r in active_routes)
+            
+            for i, route in enumerate(active_routes):
+                new_x = start_x + i * pitch
+                self.adjust_route_exit(route['segments'], new_x, common_y)
+        
+        elif exit_direction in ['left', 'right']:
+            # Sort by row, align in Y with pitch
+            active_routes.sort(key=lambda r: (r['active_col'], r['active_row']))
+            
+            # Find common X coordinate
+            if exit_direction == 'left':
+                common_x = min(r['exit_x'] for r in active_routes)
+            else:
+                common_x = max(r['exit_x'] for r in active_routes)
+            
+            # Assign Y positions with pitch
+            start_y = min(r['exit_y'] for r in active_routes)
+            
+            for i, route in enumerate(active_routes):
+                new_y = start_y + i * pitch
+                self.adjust_route_exit(route['segments'], common_x, new_y)
+        
+        print(f"✓ Aligned {len(active_routes)} exit points - Direction: {exit_direction}, Pitch: {pitch}µm")
+        self.draw_canvas()
 
+    def adjust_route_exit(self, segments, new_x, new_y):
+        """Adjust the exit point of a route"""
+        if not segments:
+            return
+        
+        # Modify last segment to reach new exit point
+        last_seg = segments[-1]
+        
+        # Determine if we need additional segment
+        if last_seg['type'] == 'horizontal' and abs(new_y - last_seg['y2']) > 0.01:
+            # Need vertical extension
+            extension = {
+                'id': len(self.routing_segments),
+                'transistor': last_seg['transistor'],
+                'x1': last_seg['x2'],
+                'y1': last_seg['y2'],
+                'x2': last_seg['x2'],
+                'y2': new_y,
+                'type': 'vertical'
+            }
+            self.routing_segments.append(extension)
+            
+            # Also adjust X if needed
+            if abs(new_x - last_seg['x2']) > 0.01:
+                extension2 = {
+                    'id': len(self.routing_segments),
+                    'transistor': last_seg['transistor'],
+                    'x1': last_seg['x2'],
+                    'y1': new_y,
+                    'x2': new_x,
+                    'y2': new_y,
+                    'type': 'horizontal'
+                }
+                self.routing_segments.append(extension2)
+        
+        elif last_seg['type'] == 'vertical' and abs(new_x - last_seg['x2']) > 0.01:
+            # Need horizontal extension
+            extension = {
+                'id': len(self.routing_segments),
+                'transistor': last_seg['transistor'],
+                'x1': last_seg['x2'],
+                'y1': last_seg['y2'],
+                'x2': new_x,
+                'y2': last_seg['y2'],
+                'type': 'horizontal'
+            }
+            self.routing_segments.append(extension)
+            
+            # Also adjust Y if needed
+            if abs(new_y - last_seg['y2']) > 0.01:
+                extension2 = {
+                    'id': len(self.routing_segments),
+                    'transistor': last_seg['transistor'],
+                    'x1': new_x,
+                    'y1': last_seg['y2'],
+                    'x2': new_x,
+                    'y2': new_y,
+                    'type': 'vertical'
+                }
+                self.routing_segments.append(extension2)
+        else:
+            # Just adjust the endpoint
+            last_seg['x2'] = new_x
+            last_seg['y2'] = new_y
+
+    def detect_exit_direction(self, exit_points):
+        """Detecta la dirección predominante de salida"""
+        votes = {'up': 0, 'down': 0, 'left': 0, 'right': 0}
+        
+        for ep in exit_points:
+            gate_x, gate_y = ep['gate_pos']
+            exit_x, exit_y = ep['exit_pos']
+            
+            dx = exit_x - gate_x
+            dy = exit_y - gate_y
+            
+            if abs(dx) > abs(dy):
+                if dx > 0:
+                    votes['right'] += 1
+                else:
+                    votes['left'] += 1
+            else:
+                # En canvas: Y+ hacia abajo
+                if dy < 0:
+                    votes['up'] += 1
+                else:
+                    votes['down'] += 1
+        
+        return max(votes, key=votes.get)
+
+    def align_routes_final(self):
+        """
+        Alinea todas las rutas como paso final antes de exportar.
+        Modifica los route_points para que todos los gates salgan alineados.
+        """
+        if not self.routing_segments:
+            messagebox.showwarning("No Routes", "No routes to align!")
+            return
+        
+        # Agrupar segmentos por transistor
+        routes_by_transistor = {}
+        for segment in self.routing_segments:
+            t_key = segment['transistor']
+            if t_key not in routes_by_transistor:
+                routes_by_transistor[t_key] = []
+            routes_by_transistor[t_key].append(segment)
+        
+        # Analizar cada ruta para encontrar el punto de salida
+        exit_points = []
+        for t_key, segments in routes_by_transistor.items():
+            if not segments:
+                continue
+            
+            t = self.transistors[t_key]
+            if t['is_dummy']:
+                continue
+            
+            # Encontrar el último segmento
+            last_segment = segments[-1]
+            
+            # Punto de salida actual
+            exit_x = last_segment['x2']
+            exit_y = last_segment['y2']
+            
+            # Gate center
+            gate_x = t['x'] + self.transistor_width / 2
+            gate_y = t['y'] + self.transistor_height / 2
+            
+            exit_points.append({
+                'transistor': t_key,
+                'active_row': t['active_row'],
+                'active_col': t['active_col'],
+                'gate_pos': (gate_x, gate_y),
+                'exit_pos': (exit_x, exit_y),
+                'last_segment': last_segment,
+                'segments': segments
+            })
+        
+        if not exit_points:
+            messagebox.showwarning("No Routes", "No active routes to align!")
+            return
+        
+        # Detectar dirección predominante
+        direction = self.detect_exit_direction(exit_points)
+        
+        # Diálogo para confirmar alineación
+        result = self.show_alignment_dialog(direction, len(exit_points))
+        if not result:
+            return
+        
+        exit_direction = result['direction']
+        exit_pitch = result['pitch']
+        
+        print(f"\n{'='*50}")
+        print(f"ALIGNING ROUTES")
+        print(f"Direction: {exit_direction}, Pitch: {exit_pitch}µm")
+        print(f"{'='*50}")
+        
+        # Realizar alineación
+        self.perform_alignment(exit_points, exit_direction, exit_pitch)
+        
+        # Redibujar
+        self.draw_canvas()
+        self.update_stats()
+        
+        messagebox.showinfo("Alignment Complete", 
+                            f"Aligned {len(exit_points)} routes\n"
+                            f"Direction: {exit_direction}\n"
+                            f"Pitch: {exit_pitch}µm")
+
+    def perform_alignment(self, exit_points, direction, pitch):
+        """Realiza la alineación agregando extensiones a las rutas"""
+        
+        # Ordenar según la dirección
+        if direction in ['up', 'down']:
+            exit_points.sort(key=lambda ep: (ep['active_row'], ep['active_col']))
+        else:
+            exit_points.sort(key=lambda ep: (ep['active_col'], ep['active_row']))
+        
+        # Calcular línea de alineación con margen
+        margin = 3.0  # µm de margen
+        
+        if direction == 'up':
+            align_y = min(ep['exit_pos'][1] for ep in exit_points) - margin
+        elif direction == 'down':
+            align_y = max(ep['exit_pos'][1] for ep in exit_points) + margin
+        elif direction == 'left':
+            align_x = min(ep['exit_pos'][0] for ep in exit_points) - margin
+        else:  # right
+            align_x = max(ep['exit_pos'][0] for ep in exit_points) + margin
+        
+        # Calcular posición inicial para mantener orden
+        if direction in ['up', 'down']:
+            # Encontrar el centro X del array
+            all_x = [ep['exit_pos'][0] for ep in exit_points]
+            center_x = (min(all_x) + max(all_x)) / 2
+            start_x = center_x - (len(exit_points) - 1) * pitch / 2
+        else:
+            # Encontrar el centro Y del array
+            all_y = [ep['exit_pos'][1] for ep in exit_points]
+            center_y = (min(all_y) + max(all_y)) / 2
+            start_y = center_y - (len(exit_points) - 1) * pitch / 2
+        
+        # Aplicar alineación creando extensiones
+        for i, ep in enumerate(exit_points):
+            current_exit_x = ep['exit_pos'][0]
+            current_exit_y = ep['exit_pos'][1]
+            
+            if direction in ['up', 'down']:
+                new_x = start_x + i * pitch
+                new_y = align_y
+            else:  # left/right
+                new_x = align_x
+                new_y = start_y + i * pitch
+            
+            # Crear extensión si es necesaria
+            dx = abs(new_x - current_exit_x)
+            dy = abs(new_y - current_exit_y)
+            
+            if dx > 0.01 or dy > 0.01:
+                self.create_alignment_extension(
+                    ep['transistor'],
+                    current_exit_x, current_exit_y,
+                    new_x, new_y
+                )
+        
+        print(f"✓ Aligned {len(exit_points)} routes")
+        print(f"  Direction: {direction}")
+        print(f"  Pitch: {pitch}µm")
+
+    def create_alignment_extension(self, transistor_key, from_x, from_y, to_x, to_y):
+        """
+        Crea segmentos de extensión para alcanzar el punto alineado
+        """
+        # Snap to grid
+        from_x = round(from_x / 0.05) * 0.05
+        from_y = round(from_y / 0.05) * 0.05
+        to_x = round(to_x / 0.05) * 0.05
+        to_y = round(to_y / 0.05) * 0.05
+        
+        dx = abs(to_x - from_x)
+        dy = abs(to_y - from_y)
+        
+        # Crear ruta Manhattan (L-shape si es necesario)
+        if dx > 0.01 and dy > 0.01:
+            # Necesitamos dos segmentos
+            # Opción 1: Vertical primero, luego horizontal
+            
+            # Segmento vertical
+            v_segment = {
+                'id': len(self.routing_segments),
+                'transistor': transistor_key,
+                'x1': from_x,
+                'y1': from_y,
+                'x2': from_x,
+                'y2': to_y,
+                'type': 'vertical',
+                'is_extension': True  # Marcar como extensión
+            }
+            self.routing_segments.append(v_segment)
+            
+            # Segmento horizontal
+            h_segment = {
+                'id': len(self.routing_segments),
+                'transistor': transistor_key,
+                'x1': from_x,
+                'y1': to_y,
+                'x2': to_x,
+                'y2': to_y,
+                'type': 'horizontal',
+                'is_extension': True
+            }
+            self.routing_segments.append(h_segment)
+            
+        elif dx > 0.01:
+            # Solo horizontal
+            h_segment = {
+                'id': len(self.routing_segments),
+                'transistor': transistor_key,
+                'x1': from_x,
+                'y1': from_y,
+                'x2': to_x,
+                'y2': from_y,
+                'type': 'horizontal',
+                'is_extension': True
+            }
+            self.routing_segments.append(h_segment)
+            
+        elif dy > 0.01:
+            # Solo vertical
+            v_segment = {
+                'id': len(self.routing_segments),
+                'transistor': transistor_key,
+                'x1': from_x,
+                'y1': from_y,
+                'x2': from_x,
+                'y2': to_y,
+                'type': 'vertical',
+                'is_extension': True
+            }
+            self.routing_segments.append(v_segment)
+
+    def show_alignment_dialog(self, detected_direction, num_routes):
+        """Muestra diálogo para confirmar parámetros de alineación"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Route Alignment Settings")
+        dialog.geometry("400x300")
+        
+        # Variables
+        direction_var = tk.StringVar(value=detected_direction)
+        pitch_var = tk.DoubleVar(value=1.0)
+        
+        # UI
+        ttk.Label(dialog, text=f"Aligning {num_routes} routes", 
+                font=('Arial', 12, 'bold')).grid(row=0, column=0, columnspan=2, pady=10)
+        
+        ttk.Label(dialog, text="Exit Direction:").grid(row=1, column=0, padx=10, pady=5, sticky='e')
+        
+        dir_frame = ttk.Frame(dialog)
+        dir_frame.grid(row=1, column=1, padx=10, pady=5)
+        
+        for dir_name in ['up', 'down', 'left', 'right']:
+            ttk.Radiobutton(dir_frame, text=dir_name.capitalize(), 
+                            variable=direction_var, 
+                            value=dir_name).pack(side=tk.LEFT)
+        
+        ttk.Label(dialog, text="Exit Pitch (µm):").grid(row=2, column=0, padx=10, pady=5, sticky='e')
+        ttk.Spinbox(dialog, from_=0.5, to=5.0, increment=0.1, 
+                    textvariable=pitch_var, width=10).grid(row=2, column=1, padx=10, pady=5, sticky='w')
+        
+        # Preview
+        ttk.Label(dialog, text="Preview:", font=('Arial', 10, 'bold')).grid(row=3, column=0, columnspan=2, pady=10)
+        
+        preview_text = tk.Text(dialog, height=6, width=50)
+        preview_text.grid(row=4, column=0, columnspan=2, padx=10, pady=5)
+        
+        def update_preview(*args):
+            preview_text.delete(1.0, tk.END)
+            dir_val = direction_var.get()
+            pitch_val = pitch_var.get()
+            
+            if dir_val in ['up', 'down']:
+                preview_text.insert(1.0, f"All routes will exit {dir_val.upper()}\n")
+                preview_text.insert(tk.END, f"Horizontal spacing: {pitch_val}µm\n")
+                preview_text.insert(tk.END, f"All exits at same Y coordinate\n")
+            else:
+                preview_text.insert(1.0, f"All routes will exit {dir_val.upper()}\n")
+                preview_text.insert(tk.END, f"Vertical spacing: {pitch_val}µm\n")
+                preview_text.insert(tk.END, f"All exits at same X coordinate\n")
+        
+        direction_var.trace('w', update_preview)
+        pitch_var.trace('w', update_preview)
+        update_preview()
+        
+        # Result
+        result = {'confirmed': False}
+        
+        def apply():
+            result['confirmed'] = True
+            result['direction'] = direction_var.get()
+            result['pitch'] = pitch_var.get()
+            dialog.destroy()
+        
+        def cancel():
+            dialog.destroy()
+        
+        ttk.Button(dialog, text="Apply Alignment", command=apply).grid(row=5, column=0, padx=10, pady=10)
+        ttk.Button(dialog, text="Cancel", command=cancel).grid(row=5, column=1, padx=10, pady=10)
+        
+        dialog.wait_window()
+        return result if result.get('confirmed') else None
 
     def debug_routing_info(self):
         """Print debug information about current routing state"""
