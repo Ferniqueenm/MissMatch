@@ -58,32 +58,53 @@ def process_schematic_dut():
     output_filename = config["xschem_dir"]+config["dut_schname"]
     Dmax  = config["DUT"]["block_size"]
     GSmax = config["DUT"]["block_size"]
+    W = config["DUT"]["W"]
+    L = config["DUT"]["L"]
+    w = W[0]
+    l = L[0]
+    tap_w = config["DUT"]["w_tap"]
+    tap_l = config["DUT"]["l_tap"]
     with open(output_filename, "w") as f:
         # Static heade 
         f.write("v {xschem version=3.4.6 file_version=1.2}\n")
         f.write("G {}\nK {}\nV {}\nS {}\nE {}\n")
+        f.write(f"C {{devices/iopin.sym}} 0 0 2 0  {{name=p9 lab=B}}\n")
 
-
+        cnt=0
         # horizontal loop fro polygons
         for n in range(1, Dmax + 1):
             xpos =  n * 200
+            f.write(f"C {{devices/iopin.sym}} {100+xpos-200} 0 1 1  {{name=p6{n} lab=D{n}}}\n")
             for m in range(1, GSmax + 1):
                 ypos =  m * 200
+                cnt += 1
                 f.write(f"P 4 5 {xpos-200} {ypos-200} {xpos} {ypos-200} {xpos} {ypos} {xpos-200} {ypos} {xpos-200} {ypos-200} {{}}\n")
                 f.write(f"N {170+xpos-200} {70+ypos-200} {170+xpos-200} {110+ypos-200} {{lab=B}}\n")
                 f.write(f"N {170+xpos-200} {170+ypos-200} {170+xpos-200} {190+ypos-200} {{lab=B}}\n")
-                f.write(f"N {90+xpos-200} {100+ypos-200} {90+xpos-200} {140+ypos-200} {{lab=S1}}\n")
-                f.write(f"N {10+xpos-200} {70+ypos-200} {50+xpos-200} {70+ypos-200} {{lab=G1}}\n")
-                f.write(f"N {90+xpos-200} {20+ypos-200} {90+xpos-200} {40+ypos-200} {{lab=D1}}\n")
-                f.write(f"N {10+xpos-200} {20+ypos-200} {90+xpos-200} {20+ypos-200} {{lab=D1}}\n")
+                f.write(f"N {90+xpos-200} {100+ypos-200} {90+xpos-200} {140+ypos-200} {{lab=S{m}}}\n")
+                f.write(f"N {10+xpos-200} {70+ypos-200} {50+xpos-200} {70+ypos-200} {{lab=G{m}}}\n")
+                f.write(f"N {90+xpos-200} {20+ypos-200} {90+xpos-200} {40+ypos-200} {{lab=D{n}}}\n")
+                f.write(f"N {10+xpos-200} {20+ypos-200} {90+xpos-200} {20+ypos-200} {{lab=D{n}}}\n")
                 f.write(f"N {10+xpos-200} {190+ypos-200} {170+xpos-200} {190+ypos-200} {{lab=B}}\n")
-                f.write(f"N {10+xpos-200} {140+ypos-200} {90+xpos-200} {140+ypos-200} {{lab=S1}}\n")
-                f.write(f"N {10+xpos-200} {10+ypos-200} {10+xpos-200} {20+ypos-200} {{lab=D1}}\n")
-                f.write(f"N {10+xpos-200} {60+ypos-200} {10+xpos-200} {70+ypos-200} {{lab=G1}}\n")
-                f.write(f"N {10+xpos-200} {130+ypos-200} {10+xpos-200} {140+ypos-200} {{lab=S1}}\n")
+                f.write(f"N {10+xpos-200} {140+ypos-200} {90+xpos-200} {140+ypos-200} {{lab=S{m}}}\n")
+                f.write(f"N {10+xpos-200} {10+ypos-200} {10+xpos-200} {20+ypos-200} {{lab=D{n}}}\n")
+                f.write(f"N {10+xpos-200} {60+ypos-200} {10+xpos-200} {70+ypos-200} {{lab=G{m}}}\n")
+                f.write(f"N {10+xpos-200} {130+ypos-200} {10+xpos-200} {140+ypos-200} {{lab=S{m}}}\n")
                 f.write(f"N {10+xpos-200} {180+ypos-200} {10+xpos-200} {190+ypos-200} {{lab=B}}\n")
                 f.write(f"N {170+xpos-200} {60+ypos-200} {170+xpos-200} {70+ypos-200} {{lab=B}}\n")
                 f.write(f"N {90+xpos-200} {70+ypos-200} {170+xpos-200} {70+ypos-200} {{lab=B}}\n")
+                f.write(f"C {{lab_pin.sym}} {10+xpos-200} {15+ypos-200} 2 0  {{name=p1{cnt} sig_type=std_logic lab=D{n}}}\n")
+                f.write(f"C {{lab_pin.sym}} {10+xpos-200} {60+ypos-200} 2 0  {{name=p2{cnt} sig_type=std_logic lab=G{m}}}\n")
+                f.write(f"C {{lab_pin.sym}} {10+xpos-200} {130+ypos-200} 2 0  {{name=p3{cnt} sig_type=std_logic lab=S{m}}}\n")
+                f.write(f"C {{lab_pin.sym}} {10+xpos-200} {180+ypos-200} 2 0  {{name=p4{cnt} sig_type=std_logic lab=B}}\n")
+                f.write(f"C {{lab_pin.sym}} {170+xpos-200} {60+ypos-200} 1 2  {{name=p5{cnt} sig_type=std_logic lab=sub!}}\n")
+                f.write(f"C {{sg13g2_pr/ptap1.sym}} {170+xpos-200} {140+ypos-200} 2 0 {{name=R{cnt} \nmodel=ptap1\nspiceprefix=X\n w={tap_w}\nl={tap_l}}}\n")
+                f.write(f"C {{sg13g2_pr/sg13_lv_nmos.sym}} {70+xpos-200} {70+ypos-200} 0 0 {{name=M{cnt} \nmodel=sg13_lv_nmos\nspiceprefix=X\n w={w}\nl={l}\nng=1\nm=1}}\n")
+                
+        for m in range(1, GSmax + 1):
+            ypos = m*200
+            f.write(f"C {{devices/iopin.sym}} 0 {70+ypos-200} 2 0  {{name=p7{m} lab=G{m}}}\n")
+            f.write(f"C {{devices/iopin.sym}} 0 {140+ypos-200} 2 0  {{name=p8{m} lab=S{m}}}\n")
 
     print(f"Schematic file written to {output_filename}")
 
