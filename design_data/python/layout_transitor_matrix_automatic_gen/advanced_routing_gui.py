@@ -604,9 +604,8 @@ class AdvancedRoutingGUI:
                   command=self.generate_report).pack(fill=tk.X, pady=2)
         ttk.Button(action_frame, text="Copy Pattern Dict",
                 command=self.copy_pattern_dict).pack(fill=tk.X, pady=2)
-        ttk.Button(action_frame, text="📐 Align All Routes",
-          command=self.align_routes_final,
-          style='Accent.TButton').pack(fill=tk.X, pady=5)
+        ttk.Button(action_frame, text="Route Drains/Sources",
+              command=self.create_drain_source_routes).pack(fill=tk.X, pady=2)
         
         # Estadísticas
         stats_frame = ttk.LabelFrame(right_panel, text="Statistics", padding="10")
@@ -882,22 +881,39 @@ class AdvancedRoutingGUI:
                                font=('Arial', 10, 'bold'), anchor='w')
     
     def draw_segment(self, segment):
-        """Dibuja un segmento de ruta"""
+        """Modified to handle different route types with different colors"""
         x1, y1 = self.um_to_canvas(segment['x1'], segment['y1'])
         x2, y2 = self.um_to_canvas(segment['x2'], segment['y2'])
         
-        color = self.colors['routing']
+        # Choose color based on route type
+        route_type = segment.get('route_type', 'gate')
+        if route_type == 'drain':
+            color = '#44ff44'  # Green for drain
+        elif route_type == 'source':
+            color = '#4444ff'  # Blue for source
+        elif route_type in ['drain_via', 'source_via']:
+            color = '#ff44ff'  # Magenta for vias
+        else:
+            color = self.colors.get('routing', '#0066ff')  # Default gate color
+        
         if segment.get('selected', False):
             color = self.colors['routing_selected']
         
         width = max(2, int(self.metal3_width * self.zoom_level))
         
-        line = self.canvas.create_line(x1, y1, x2, y2,
-                                     fill=color,
-                                     width=width,
-                                     capstyle='projecting',
-                                     tags=f"segment_{segment['id']}")
-        segment['canvas_id'] = line
+        # Draw via markers as circles
+        if segment['type'] == 'via':
+            radius = 5
+            self.canvas.create_oval(x1-radius, y1-radius, x2+radius, y2+radius,
+                                    fill=color, outline='black',
+                                    tags=f"segment_{segment['id']}")
+        else:
+            line = self.canvas.create_line(x1, y1, x2, y2,
+                                        fill=color,
+                                        width=width,
+                                        capstyle='projecting',
+                                        tags=f"segment_{segment['id']}")
+            segment['canvas_id'] = line
     
     def find_transistor_at(self, x_um, y_um):
         """Find transistor at coordinates - with LARGER hit area"""
@@ -945,68 +961,196 @@ class AdvancedRoutingGUI:
         return math.sqrt((px - cx)**2 + (py - cy)**2)
     
     def on_mouse_down(self, event):
-        """STATE 1: Click en gate para empezar ruteo"""
+        """Start column routing"""
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
         x_um, y_um = self.canvas_to_um(x, y)
         
-        if not self.routing_active:
-            # Buscar transistor
-            t = self.find_transistor_at(x_um, y_um)
-            
-            if t and not t['is_dummy']:
-                # INICIAR RUTEO
-                self.routing_active = True
-                self.selected_transistor = t
-                self.current_route = []
-                
-                # Punto inicial: centro del gate
-                gate_x = t['x'] + self.transistor_width / 2
-                gate_y = t['y'] + self.transistor_height / 2
-                self.last_point = (gate_x, gate_y)
-                
-                # Resaltar gate
-                gate_tag = f"gate_{t['row']}_{t['col']}"
-                self.canvas.itemconfig(gate_tag, fill='#ff8800', width=4)
-                
-                # Mostrar estado
-                self.show_status(f"Ruteando desde G[{t['active_row']},{t['active_col']}] - Click para agregar segmentos, ESC para terminar")
+        mode = self.mode_var.get()
         
-        else:
-            # STATE 2: Agregar segmento en línea recta (Manhattan)
-            if self.last_point:
-                # Snap a grid
-                target_x = round(x_um / 0.05) * 0.05
-                target_y = round(y_um / 0.05) * 0.05
+        if mode == 'draw':
+            t = self.find_transistor_at(x_um, y_um)
+            if t and not t['is_dummy']:
+                # Start column routing
+                self.start_column_routing(t)
+        elif mode == 'delete':
+            self.delete_column_route_at(x_um, y_um)
+
+
+        def show_status(self, message):
+            """Mostrar mensaje de estado"""
+            print(f"Status: {message}")
+            if hasattr(self, 'report_text'):
+                self.report_text.insert(tk.END, f"\n{message}")
+                self.report_text.see(tk.END)
+
+    def start_column_routing(self, start_transistor):
+        """Start routing for entire column"""
+        col = start_transistor['active_col']
+        
+        # Get all transistors in this column
+        column_transistors = []
+        for t_key, t_info in self.transistors.items():
+            if t_info['active_col'] == col and not t_info['is_dummy']:
+                column_transistors.append(t_info)
+        
+        # Sort by row (top to bottom in GUI)
+        column_transistors.sort(key=lambda t: t['active_row'])
+        
+        if len(column_transistors) < 2:
+            print(f"Column {col} has less than 2 transistors, skipping")
+            return
+        
+        # Create vertical route connecting all gates
+        self.create_column_route(column_transistors, col)
+        
+        # Auto-clone to other columns if col == 0
+        if col == 0 and self.auto_clone_enabled:
+            self.clone_column_pattern()
+
+    def clone_column_pattern(self):
+        """Clone column 0 pattern to all other columns"""
+        # Get column 0 segments
+        col0_segments = [s for s in self.routing_segments if s.get('column') == 0]
+        
+        if not col0_segments:
+            return
+        
+        # Get column 0 transistors for reference
+        col0_transistors = []
+        for t_key, t_info in self.transistors.items():
+            if t_info['active_col'] == 0 and not t_info['is_dummy']:
+                col0_transistors.append(t_info)
+        
+        if not col0_transistors:
+            return
+        
+        # Reference X position
+        ref_x = col0_transistors[0]['x'] + self.transistor_width / 2
+        
+        # Clone to other columns
+        for target_col in range(1, self.array_cols):
+            # Get target column transistors
+            target_transistors = []
+            for t_key, t_info in self.transistors.items():
+                if t_info['active_col'] == target_col and not t_info['is_dummy']:
+                    target_transistors.append(t_info)
+            
+            if not target_transistors:
+                continue
+            
+            # Calculate X offset
+            target_x = target_transistors[0]['x'] + self.transistor_width / 2
+            x_offset = target_x - ref_x
+            
+            # Clone segments with offset
+            for seg in col0_segments:
+                # Find corresponding transistor in target column
+                orig_t = self.transistors[seg['transistor']]
+                target_t = None
                 
-                # Crear segmento Manhattan
-                segments = self.create_manhattan_segments(self.last_point, (target_x, target_y))
+                for t in target_transistors:
+                    if t['active_row'] == orig_t['active_row']:
+                        target_t = t
+                        break
                 
-                for seg in segments:
-                    # Guardar y dibujar segmento
-                    segment_data = {
+                if target_t:
+                    new_segment = {
                         'id': len(self.routing_segments),
-                        'transistor': (self.selected_transistor['row'], self.selected_transistor['col']),
-                        'x1': seg['x1'],
+                        'transistor': (target_t['row'], target_t['col']),
+                        'x1': seg['x1'] + x_offset,
                         'y1': seg['y1'],
-                        'x2': seg['x2'],
+                        'x2': seg['x2'] + x_offset,
                         'y2': seg['y2'],
-                        'type': seg['type']
+                        'type': seg['type'],
+                        'column': target_col
                     }
-                    self.routing_segments.append(segment_data)
-                    self.current_route.append(segment_data)
-                    self.draw_segment(segment_data)
-                    
-                    # Actualizar último punto
-                    self.last_point = (seg['x2'], seg['y2'])
+                    self.routing_segments.append(new_segment)
+                    target_t['routed'] = True
+        
+        self.draw_canvas()
+        self.update_stats()
+        print(f"Cloned column 0 pattern to {self.array_cols - 1} columns")
 
+    def create_column_route(self, column_transistors, col):
+        """Create vertical route connecting all gates in column"""
+        
+        # Clear existing routes for this column
+        self.routing_segments = [s for s in self.routing_segments 
+                                if not any(self.transistors[s['transistor']]['active_col'] == col 
+                                        for _ in [None] if s['transistor'] in self.transistors)]
+        
+        # Calculate route parameters
+        first_t = column_transistors[0]
+        last_t = column_transistors[-1]
+        
+        # X position for vertical route (offset from gates)
+        route_x_offset = -1.0 if col < self.array_cols // 2 else 1.0  # Left for left half, right for right half
+        
+        # Create segments connecting all gates
+        segments_added = []
+        
+        for i, t in enumerate(column_transistors):
+            gate_x = t['x'] + self.transistor_width / 2
+            gate_y = t['y'] + self.transistor_height / 2
+            
+            # Horizontal segment from gate to vertical bus
+            h_segment = {
+                'id': len(self.routing_segments) + len(segments_added),
+                'transistor': (t['row'], t['col']),
+                'x1': gate_x,
+                'y1': gate_y,
+                'x2': gate_x + route_x_offset,
+                'y2': gate_y,
+                'type': 'horizontal',
+                'column': col
+            }
+            segments_added.append(h_segment)
+            
+            # Vertical segment connecting to next transistor
+            if i < len(column_transistors) - 1:
+                next_t = column_transistors[i + 1]
+                next_gate_y = next_t['y'] + self.transistor_height / 2
+                
+                v_segment = {
+                    'id': len(self.routing_segments) + len(segments_added),
+                    'transistor': (t['row'], t['col']),
+                    'x1': gate_x + route_x_offset,
+                    'y1': gate_y,
+                    'x2': gate_x + route_x_offset,
+                    'y2': next_gate_y,
+                    'type': 'vertical',
+                    'column': col
+                }
+                segments_added.append(v_segment)
+        
+        # Add exit segment (extend beyond last transistor)
+        exit_length = 3.0  # µm
+        exit_y = last_t['y'] + self.transistor_height / 2 + exit_length
+        
+        exit_segment = {
+            'id': len(self.routing_segments) + len(segments_added),
+            'transistor': (last_t['row'], last_t['col']),
+            'x1': last_t['x'] + self.transistor_width / 2 + route_x_offset,
+            'y1': last_t['y'] + self.transistor_height / 2,
+            'x2': last_t['x'] + self.transistor_width / 2 + route_x_offset,
+            'y2': exit_y,
+            'type': 'vertical',
+            'column': col
+        }
+        segments_added.append(exit_segment)
+        
+        # Add all segments
+        self.routing_segments.extend(segments_added)
+        
+        # Mark transistors as routed
+        for t in column_transistors:
+            t['routed'] = True
+        
+        self.draw_canvas()
+        self.update_stats()
+        print(f"Created column route for column {col} with {len(column_transistors)} transistors")
 
-    def show_status(self, message):
-        """Mostrar mensaje de estado"""
-        print(f"Status: {message}")
-        if hasattr(self, 'report_text'):
-            self.report_text.insert(tk.END, f"\n{message}")
-            self.report_text.see(tk.END)
 
     def create_manhattan_segments(self, start, end):
         """Crear segmentos Manhattan entre dos puntos"""
@@ -1271,6 +1415,177 @@ class AdvancedRoutingGUI:
         
         self.selected_transistor = None
         self.update_stats()
+
+    def create_drain_source_routes(self):
+        """Create row-wise drain and source connections"""
+        print("\nCreating drain and source routes...")
+        
+        # Clear existing drain/source routes
+        self.routing_segments = [s for s in self.routing_segments 
+                                if s.get('route_type') not in ['drain', 'source']]
+        
+        # Group transistors by row
+        rows = {}
+        for t_key, t_info in self.transistors.items():
+            if not t_info['is_dummy']:
+                row = t_info['active_row']
+                if row not in rows:
+                    rows[row] = []
+                rows[row].append(t_info)
+        
+        # Process each row
+        for row in sorted(rows.keys()):
+            row_transistors = rows[row]
+            
+            # Sort by column (left to right)
+            row_transistors.sort(key=lambda t: t['active_col'])
+            
+            if len(row_transistors) < 1:
+                continue
+            
+            # Create drain route for this row
+            self.create_row_drain_route(row_transistors, row)
+            
+            # Create source route for this row
+            self.create_row_source_route(row_transistors, row)
+        
+        self.draw_canvas()
+        self.update_stats()
+        print(f"Created drain/source routes for {len(rows)} rows")
+
+    def create_row_drain_route(self, row_transistors, row):
+        """Create horizontal route connecting all drains in row"""
+        
+        segments_added = []
+        
+        # Drain is on the left side of transistor (at 20% of width)
+        for i, t in enumerate(row_transistors):
+            drain_x = t['x'] + self.transistor_width * 0.2
+            drain_y = t['y'] + self.transistor_height / 2
+            
+            # Vertical segment extending drain up
+            drain_extension = 0.5  # µm
+            v_segment = {
+                'id': len(self.routing_segments) + len(segments_added),
+                'transistor': (t['row'], t['col']),
+                'x1': drain_x,
+                'y1': drain_y,
+                'x2': drain_x,
+                'y2': drain_y - drain_extension,  # Extend upward
+                'type': 'vertical',
+                'route_type': 'drain',
+                'row': row,
+                'metal': 'M1'
+            }
+            segments_added.append(v_segment)
+            
+            # Horizontal segment connecting to next transistor's drain
+            if i < len(row_transistors) - 1:
+                next_t = row_transistors[i + 1]
+                next_drain_x = next_t['x'] + self.transistor_width * 0.2
+                
+                h_segment = {
+                    'id': len(self.routing_segments) + len(segments_added),
+                    'transistor': (t['row'], t['col']),
+                    'x1': drain_x,
+                    'y1': drain_y - drain_extension,
+                    'x2': next_drain_x,
+                    'y2': drain_y - drain_extension,
+                    'type': 'horizontal',
+                    'route_type': 'drain',
+                    'row': row,
+                    'metal': 'M1'
+                }
+                segments_added.append(h_segment)
+        
+        # Add via location marker (M4 to M1) at first drain
+        if row_transistors:
+            first_t = row_transistors[0]
+            via_x = first_t['x'] + self.transistor_width * 0.2
+            via_y = first_t['y'] + self.transistor_height / 2 - 0.5
+            
+            via_marker = {
+                'id': len(self.routing_segments) + len(segments_added),
+                'transistor': (first_t['row'], first_t['col']),
+                'x1': via_x,
+                'y1': via_y,
+                'x2': via_x,
+                'y2': via_y,
+                'type': 'via',
+                'route_type': 'drain_via',
+                'row': row,
+                'metal': 'M4_to_M1'
+            }
+            segments_added.append(via_marker)
+        
+        self.routing_segments.extend(segments_added)
+
+    def create_row_source_route(self, row_transistors, row):
+        """Create horizontal route connecting all sources in row"""
+        
+        segments_added = []
+        
+        # Source is on the right side of transistor (at 80% of width)
+        for i, t in enumerate(row_transistors):
+            source_x = t['x'] + self.transistor_width * 0.8
+            source_y = t['y'] + self.transistor_height / 2
+            
+            # Vertical segment extending source down
+            source_extension = 0.5  # µm
+            v_segment = {
+                'id': len(self.routing_segments) + len(segments_added),
+                'transistor': (t['row'], t['col']),
+                'x1': source_x,
+                'y1': source_y,
+                'x2': source_x,
+                'y2': source_y + source_extension,  # Extend downward
+                'type': 'vertical',
+                'route_type': 'source',
+                'row': row,
+                'metal': 'M1'
+            }
+            segments_added.append(v_segment)
+            
+            # Horizontal segment connecting to next transistor's source
+            if i < len(row_transistors) - 1:
+                next_t = row_transistors[i + 1]
+                next_source_x = next_t['x'] + self.transistor_width * 0.8
+                
+                h_segment = {
+                    'id': len(self.routing_segments) + len(segments_added),
+                    'transistor': (t['row'], t['col']),
+                    'x1': source_x,
+                    'y1': source_y + source_extension,
+                    'x2': next_source_x,
+                    'y2': source_y + source_extension,
+                    'type': 'horizontal',
+                    'route_type': 'source',
+                    'row': row,
+                    'metal': 'M1'
+                }
+                segments_added.append(h_segment)
+        
+        # Add via location marker (M5 to M1) at last source
+        if row_transistors:
+            last_t = row_transistors[-1]
+            via_x = last_t['x'] + self.transistor_width * 0.8
+            via_y = last_t['y'] + self.transistor_height / 2 + 0.5
+            
+            via_marker = {
+                'id': len(self.routing_segments) + len(segments_added),
+                'transistor': (last_t['row'], last_t['col']),
+                'x1': via_x,
+                'y1': via_y,
+                'x2': via_x,
+                'y2': via_y,
+                'type': 'via',
+                'route_type': 'source_via',
+                'row': row,
+                'metal': 'M5_to_M1'
+            }
+            segments_added.append(via_marker)
+        
+        self.routing_segments.extend(segments_added)
 
     def on_mouse_click(self, event):
         """
@@ -1862,80 +2177,61 @@ class AdvancedRoutingGUI:
         self.report_text.insert(1.0, report)
 
     def generate_pattern_dict(self):
-        """
-        Generate pattern dict - VERSION CORREGIDA
-        Almacena con coordenadas ACTIVAS directamente, SIN inversión
-        """
+        """Generate pattern for column-based routing"""
         pattern_dict = {}
         
-        print("\n=== GENERANDO PATRÓN (COORDENADAS ACTIVAS) ===")
-        print(f"Array: {self.array_rows}x{self.array_cols}")
-        print(f"Dummy mode: {self.dummy_mode_var.get()}")
-        
-        # Agrupar segmentos por transistor
-        transistor_routes = {}
+        # Group segments by column
+        columns_data = {}
         for segment in self.routing_segments:
-            t_key = segment['transistor']
-            if t_key not in transistor_routes:
-                transistor_routes[t_key] = []
-            transistor_routes[t_key].append(segment)
+            col = segment.get('column', -1)
+            if col >= 0:
+                if col not in columns_data:
+                    columns_data[col] = []
+                columns_data[col].append(segment)
         
-        # Procesar cada transistor
-        for t_key in sorted(transistor_routes.keys()):
-            segments = transistor_routes[t_key]
+        # Store only column 0 pattern (others are clones)
+        if 0 in columns_data:
+            col0_segments = columns_data[0]
             
-            if not segments:
-                continue
-                
-            t = self.transistors[t_key]
+            # Get all unique transistors in column 0
+            col0_transistors = set()
+            for seg in col0_segments:
+                t = self.transistors[seg['transistor']]
+                if not t['is_dummy']:
+                    col0_transistors.add((t['active_row'], t['active_col']))
             
-            if t.get('is_dummy', False):
-                continue
+            # Sort by row
+            col0_transistors = sorted(list(col0_transistors), key=lambda x: x[0])
             
-            # Obtener coordenadas ACTIVAS (no físicas)
-            active_row = t['active_row']
-            active_col = t['active_col']
-            
-            if active_row < 0 or active_col < 0:
-                continue
-            
-            # Centro del gate
-            gate_x = t['x'] + self.transistor_width / 2
-            gate_y = t['y'] + self.transistor_height / 2
-            
-            # Construir lista de puntos de ruta
-            route_points = []
-            route_points.append({'x': 0, 'y': 0})  # Comenzar en el gate
-            
-            visited = set()
-            visited.add((0, 0))
-            
-            for seg in segments:
-                # Calcular posición relativa desde el gate
-                rel_x = round(seg['x2'] - gate_x, 2)
-                rel_y = round(seg['y2'] - gate_y, 2)
-                
-                point_key = (rel_x, rel_y)
-                if point_key not in visited:
-                    route_points.append({'x': rel_x, 'y': rel_y})
-                    visited.add(point_key)
-            
-            # ¡¡¡CRÍTICO!!!
-            # Almacenar con coordenadas ACTIVAS directamente
-            # NO INVERTIR, NO TRANSFORMAR, USAR TAL CUAL
-            pattern_dict[(active_row, active_col)] = {
-                'route_points': route_points,
-                'gui_row': active_row,  # Para referencia/debug
-                'gui_col': active_col   # Para referencia/debug
+            # Create column pattern
+            pattern_dict['column_pattern'] = {
+                'transistors': col0_transistors,
+                'segments': []
             }
             
-            print(f"  Almacenando en ACTIVE[{active_row},{active_col}] - {len(route_points)} puntos")
-        
-        print(f"Total patrones: {len(pattern_dict)}")
-        print("=" * 50)
+            # Store segments relative to first transistor
+            if col0_transistors:
+                first_t_key = None
+                for t_key, t_info in self.transistors.items():
+                    if (t_info['active_row'], t_info['active_col']) == col0_transistors[0]:
+                        first_t_key = t_key
+                        break
+                
+                if first_t_key:
+                    first_t = self.transistors[first_t_key]
+                    ref_x = first_t['x'] + self.transistor_width / 2
+                    ref_y = first_t['y'] + self.transistor_height / 2
+                    
+                    for seg in col0_segments:
+                        pattern_dict['column_pattern']['segments'].append({
+                            'x1': seg['x1'] - ref_x,
+                            'y1': seg['y1'] - ref_y,
+                            'x2': seg['x2'] - ref_x,
+                            'y2': seg['y2'] - ref_y,
+                            'type': seg['type']
+                        })
         
         return pattern_dict
-
 
     def calculate_total_length(self, segments):
         """Calculate total route length"""

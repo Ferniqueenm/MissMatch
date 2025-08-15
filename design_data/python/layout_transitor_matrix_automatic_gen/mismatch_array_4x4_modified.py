@@ -51,6 +51,10 @@ LAYER_MAP = {
     'Via1':     (19, 0),  # Via 1
     'Via2':     (29, 0),  # Via 2
     'NWell':    (31, 0),  # N-well
+    'Via3':     (49, 0),  # Via 3 (M3-M4) - CORRECTED
+    'Metal4':   (50, 0),  # Metal 4 - CORRECTED
+    'Via4':     (66, 0),  # Via 4 (M4-M5) - CORRECTED
+    'Metal5':   (67, 0),  # Metal 5 - CORRECTED
     # Ptap and Ntap are NOT used by IHP for guard rings!
     # 'Ptap':     (32, 0),  # Not used
     # 'Ntap':     (33, 0),  # Not used
@@ -187,6 +191,87 @@ class ScalableMismatchArray:
             'pattern_verification': []
         }
     
+    def analyze_transistor_terminals(self, transistor_cell):
+        """
+        Analyze transistor PCell to find actual terminal positions and transistor boundaries
+        """
+        print("\n  Analyzing transistor terminals...")
+        
+        # Get transistor bbox
+        t_bbox = transistor_cell.bbox()
+        
+        terminals = {
+            # Transistor boundaries (in database units)
+            'bbox_left': t_bbox.left,
+            'bbox_right': t_bbox.right,
+            'bbox_top': t_bbox.top,
+            'bbox_bottom': t_bbox.bottom,
+            'bbox_width': t_bbox.width(),
+            'bbox_height': t_bbox.height(),
+            
+            # Terminal positions (will be filled)
+            'drain_left_edge': None,
+            'drain_right_edge': None,
+            'drain_center': None,
+            'source_left_edge': None,
+            'source_right_edge': None,
+            'source_center': None,
+            'gate_center': t_bbox.center().x,
+            'transistor_center': t_bbox.center().x
+        }
+        
+        # Find Metal1 shapes (drain/source)
+        metal1_shapes = []
+        for shape in transistor_cell.shapes(self.layers['Metal1']).each():
+            if shape.is_box():
+                box = shape.box
+                metal1_shapes.append({
+                    'left': box.left,
+                    'right': box.right,
+                    'top': box.top,
+                    'bottom': box.bottom,
+                    'center_x': box.center().x,
+                    'center_y': box.center().y,
+                    'width': box.width(),
+                    'height': box.height()
+                })
+        
+        # Identify drain (leftmost M1) and source (rightmost M1)
+        if metal1_shapes:
+            # Sort by center X position
+            metal1_shapes.sort(key=lambda s: s['center_x'])
+            
+            # Leftmost M1 is drain
+            drain_shape = metal1_shapes[0]
+            terminals['drain_left_edge'] = drain_shape['left']
+            terminals['drain_right_edge'] = drain_shape['right']
+            terminals['drain_center'] = drain_shape['center_x']
+            terminals['drain_top'] = drain_shape['top']
+            terminals['drain_bottom'] = drain_shape['bottom']
+            
+            # Rightmost M1 is source
+            source_shape = metal1_shapes[-1]
+            terminals['source_left_edge'] = source_shape['left']
+            terminals['source_right_edge'] = source_shape['right']
+            terminals['source_center'] = source_shape['center_x']
+            terminals['source_top'] = source_shape['top']
+            terminals['source_bottom'] = source_shape['bottom']
+            
+            print(f"    Transistor bbox: width={t_bbox.width()*self.layout.dbu:.3f}µm, height={t_bbox.height()*self.layout.dbu:.3f}µm")
+            print(f"    Drain M1: x={drain_shape['center_x']*self.layout.dbu:.3f}µm")
+            print(f"    Source M1: x={source_shape['center_x']*self.layout.dbu:.3f}µm")
+        
+        # Fallback if detection failed
+        if terminals['drain_left_edge'] is None:
+            # Estimate positions
+            terminals['drain_center'] = t_bbox.center().x - t_bbox.width() * 0.3
+            terminals['drain_left_edge'] = terminals['drain_center'] - self.dbu(0.14)
+            terminals['drain_right_edge'] = terminals['drain_center'] + self.dbu(0.14)
+            print(f"    Using fallback positions")
+        
+        return terminals
+
+
     def calculate_pitches(self):
         """Calculate pitches based on transistor dimensions and spacing"""
         # Get actual transistor bbox size (this is approximate)
@@ -755,75 +840,452 @@ class ScalableMismatchArray:
 
     def route_gate_connections_enhanced(self, array_cell, transistor_info):
         """
-        Route with FIXED transistor mapping
+        Route gates: Via at CENTER -> M3 extension LEFT of transistor bbox
         """
-        print(f"\nRouting gate connections...")
-        print(f"  Array size: {ARRAY_SIZE}x{ARRAY_SIZE}")
-        print(f"  Dummy mode: {self.dummy_mode}")
+        print(f"\nRouting gate connections (adaptive spacing)...")
         
         m3_width = self.dbu(METAL3_WIDTH)
-        active_transistors = [t for t in transistor_info if not t['is_dummy']]
+        
+        # Get transistor bbox for proper spacing
+        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
+        terminal_info = self.analyze_transistor_terminals(transistor_cell)
+        
+        # Vertical bus position: LEFT of transistor bbox with clearance
+        clearance = self.dbu(0.5)  # 500nm clearance from transistor edge
+        bus_x_offset = (terminal_info['bbox_left'] - terminal_info['transistor_center']) - clearance
+        
+        print(f"  Transistor width: {terminal_info['bbox_width']*self.layout.dbu:.3f}µm")
+        print(f"  Vertical bus offset: {bus_x_offset*self.layout.dbu:.3f}µm from center")
+        
+        # Group transistors by column
+        columns = {}
+        for t in transistor_info:
+            if not t['is_dummy']:
+                col = t['active_col']
+                if col not in columns:
+                    columns[col] = []
+                columns[col].append(t)
+        
+        for col in columns:
+            columns[col].sort(key=lambda t: t['active_row'])
+        
         routes_created = 0
         
-        for t in active_transistors:
-            # Get ACTIVE coordinates from KLayout's perspective
-            active_row = t['active_row']  
-            active_col = t['active_col']
+        for col in sorted(columns.keys()):
+            col_transistors = columns[col]
             
-            if active_row < 0 or active_col < 0:
+            if len(col_transistors) < 2:
                 continue
             
-            # CRITICAL FIX: Map KLayout coordinates to GUI coordinates
-            # GUI row 0 = top, KLayout row 0 = bottom
-            # So we need to flip the row for lookup
-            gui_row = (ARRAY_SIZE - 1) - active_row
-            gui_col = active_col  # Columns don't change
+            print(f"  Column {col}: Connecting {len(col_transistors)} gates")
             
-            # Look up pattern with GUI coordinates
-            pattern_key_str = f"{gui_row},{gui_col}"
-            pattern_key = (gui_row, gui_col)
+            # Vertical bus X position (same for all in column)
+            route_x = col_transistors[0]['x'] + bus_x_offset
             
-            # Try both formats
-            pattern = self.pattern_data.get(pattern_key)
-            if not pattern:
-                pattern = self.pattern_data.get(pattern_key_str)
-            
-            if not pattern:
-                print(f"  KL[{active_row},{active_col}] -> GUI[{gui_row},{gui_col}] - No pattern")
-                continue
-            
-            print(f"  KL[{active_row},{active_col}] -> GUI[{gui_row},{gui_col}] - Found pattern")
-            
-            # Gate position
-            gate_x = t['x']
-            gate_y = t['y']
-            
-            # Create via stack at gate
-            self.create_gate_via_stack(array_cell, gate_x, gate_y)
-            
-            # Draw route from pattern
-            if 'route_points' in pattern:
-                self.create_route_from_points(
-                    array_cell, gate_x, gate_y, 
-                    pattern['route_points'], m3_width
+            for i in range(len(col_transistors)):
+                t = col_transistors[i]
+                gate_x = t['x']  # Gate center
+                gate_y = t['y']  # Gate center
+                
+                # Via stack at gate CENTER
+                self.create_gate_via_stack(array_cell, gate_x, gate_y)
+                
+                # Horizontal M3 from gate center to vertical bus
+                h_box = db.Box(
+                    min(route_x, gate_x) - m3_width//2,
+                    gate_y - m3_width//2,
+                    max(route_x, gate_x) + m3_width//2,
+                    gate_y + m3_width//2
                 )
+                array_cell.shapes(self.layers['Metal3']).insert(h_box)
                 
-                # Add label
-                if pattern['route_points']:
-                    last_point = pattern['route_points'][-1]
-                    label_x = gate_x + self.dbu(last_point['x'])
-                    label_y = gate_y - self.dbu(last_point['y'])  # Y-inverted
+                # Vertical segment to next transistor
+                if i < len(col_transistors) - 1:
+                    next_t = col_transistors[i + 1]
+                    next_gate_y = next_t['y']
                     
-                    # Use GUI coordinates for label
-                    label = f"G{gui_row}_{gui_col}"
-                    self.add_text(array_cell, label_x, label_y, label)
-                
-                routes_created += 1
+                    v_box = db.Box(
+                        route_x - m3_width//2,
+                        min(gate_y, next_gate_y) - m3_width//2,
+                        route_x + m3_width//2,
+                        max(gate_y, next_gate_y) + m3_width//2
+                    )
+                    array_cell.shapes(self.layers['Metal3']).insert(v_box)
+            
+            # Exit extension
+            last_t = col_transistors[-1]
+            exit_length = self.dbu(3.0)
+            
+            exit_box = db.Box(
+                route_x - m3_width//2,
+                last_t['y'] - m3_width//2,
+                route_x + m3_width//2,
+                last_t['y'] + exit_length + m3_width//2
+            )
+            array_cell.shapes(self.layers['Metal3']).insert(exit_box)
+            
+            self.add_text(array_cell, route_x, last_t['y'] + exit_length, f"G_COL{col}")
+            routes_created += 1
         
-        print(f"  Created {routes_created} routes")
+        print(f"Created {routes_created} column routes (adaptive spacing)")
         return routes_created
 
+    def route_drain_source_connections(self, array_cell, transistor_info):
+        """
+        Route drains and sources with proper vertical extension and via stacks
+        - Extend each drain/source vertically with M1
+        - Create via stack M1->M4 for drains, M1->M5 for sources
+        - Connect row-wise with M4 (drains) and M5 (sources)
+        """
+        print(f"\nRouting drain and source connections...")
+        print(f"  Strategy: M1 vertical extension -> Via stacks -> Row connections")
+        
+        # Group transistors by row
+        rows = {}
+        for t in transistor_info:
+            if not t['is_dummy']:
+                row = t['active_row']
+                if row not in rows:
+                    rows[row] = []
+                rows[row].append(t)
+        
+        # Sort each row by column
+        for row in rows:
+            rows[row].sort(key=lambda t: t['active_col'])
+        
+        # Process each row
+        for row in sorted(rows.keys()):
+            row_transistors = rows[row]
+            
+            if len(row_transistors) < 1:
+                continue
+            
+            print(f"  Row {row}: Processing {len(row_transistors)} transistors")
+            
+            # Route drains with M4
+            self.route_row_drains_m4(array_cell, row_transistors, row)
+            
+            # Route sources with M5
+            self.route_row_sources_m5(array_cell, row_transistors, row)
+        
+        print(f"  ✓ Completed drain/source routing for {len(rows)} rows")
 
+
+    def route_row_drains_m4(self, array_cell, row_transistors, row):
+        """
+        Route drains: M1 extension from CENTER upward to 1.5µm OUTSIDE transistor
+        """
+        
+        m1_width = self.dbu(METAL1_WIDTH)
+        m4_width = self.dbu(0.4)
+        
+        # Get terminal positions and bbox
+        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
+        terminal_info = self.analyze_transistor_terminals(transistor_cell)
+        
+        # Drain X position (left edge of drain M1)
+        drain_x_offset = terminal_info['drain_left_edge'] - terminal_info['transistor_center']
+        
+        # Extension parameters: from CENTER to 1.5µm OUTSIDE top edge
+        bbox_half_height = terminal_info['bbox_height'] / 2
+        extension_beyond = self.dbu(1)  # 1.5µm beyond transistor boundary
+        
+        print(f"    Row {row}: drains extend from CENTER to 1.5µm above transistor")
+        print(f"    Transistor half-height: {bbox_half_height*self.layout.dbu:.3f}µm")
+        
+        drain_m4_points = []
+        
+        for i, t in enumerate(row_transistors):
+            # Drain X position
+            drain_x = t['x'] + drain_x_offset
+            
+            # Extension Y positions
+            ext_start_y = t['y']  # Start from transistor CENTER
+            ext_end_y = t['y'] + bbox_half_height + extension_beyond  # End 1.5µm above top edge
+            
+            # M1 vertical extension
+            m1_extension = db.Box(
+                drain_x - m1_width//2,
+                ext_start_y - m1_width//2,
+                drain_x + m1_width//2,
+                ext_end_y + m1_width//2
+            )
+            array_cell.shapes(self.layers['Metal1']).insert(m1_extension)
+            
+            # Via stack at end of extension (1.5µm outside transistor)
+            via_x = drain_x
+            via_y = ext_end_y
+            
+            # Via1 (M1 to M2)
+            via1_size = self.dbu(VIA1_SIZE)
+            via1_box = db.Box(
+                via_x - via1_size//2, via_y - via1_size//2,
+                via_x + via1_size//2, via_y + via1_size//2
+            )
+            array_cell.shapes(self.layers['Via1']).insert(via1_box)
+            
+            # M2 pad
+            m2_size = self.dbu(METAL2_WIDTH)
+            m2_pad = db.Box(
+                via_x - m2_size//2, via_y - m2_size//2,
+                via_x + m2_size//2, via_y + m2_size//2
+            )
+            array_cell.shapes(self.layers['Metal2']).insert(m2_pad)
+            
+            # Via2 (M2 to M3)
+            via2_size = self.dbu(VIA2_SIZE)
+            via2_box = db.Box(
+                via_x - via2_size//2, via_y - via2_size//2,
+                via_x + via2_size//2, via_y + via2_size//2
+            )
+            array_cell.shapes(self.layers['Via2']).insert(via2_box)
+            
+            # M3 pad
+            m3_size = self.dbu(METAL3_WIDTH)
+            m3_pad = db.Box(
+                via_x - m3_size//2, via_y - m3_size//2,
+                via_x + m3_size//2, via_y + m3_size//2
+            )
+            array_cell.shapes(self.layers['Metal3']).insert(m3_pad)
+            
+            # Via3 (M3 to M4)
+            via3_size = self.dbu(0.26)
+            via3_box = db.Box(
+                via_x - via3_size//2, via_y - via3_size//2,
+                via_x + via3_size//2, via_y + via3_size//2
+            )
+            array_cell.shapes(self.layers['Via3']).insert(via3_box)
+            
+            # M4 pad
+            m4_pad = db.Box(
+                via_x - m4_width//2, via_y - m4_width//2,
+                via_x + m4_width//2, via_y + m4_width//2
+            )
+            array_cell.shapes(self.layers['Metal4']).insert(m4_pad)
+            
+            drain_m4_points.append((via_x, via_y))
+        
+        # Connect all drains with M4 horizontal line
+        if len(drain_m4_points) > 1:
+            m4_y = drain_m4_points[0][1]
+            min_x = min(p[0] for p in drain_m4_points)
+            max_x = max(p[0] for p in drain_m4_points)
+            
+            m4_horizontal = db.Box(
+                min_x - m4_width//2,
+                m4_y - m4_width//2,
+                max_x + m4_width//2,
+                m4_y + m4_width//2
+            )
+            array_cell.shapes(self.layers['Metal4']).insert(m4_horizontal)
+            
+            print(f"    Connected {len(drain_m4_points)} drains with M4 at 1.5µm above transistor")
+        
+        # Extension for pad connection
+        if drain_m4_points:
+            ext_length = self.dbu(2.0)
+            first_x = drain_m4_points[0][0]
+            m4_y = drain_m4_points[0][1]
+            
+            left_ext = db.Box(
+                first_x - ext_length - m4_width//2,
+                m4_y - m4_width//2,
+                first_x + m4_width//2,
+                m4_y + m4_width//2
+            )
+            array_cell.shapes(self.layers['Metal4']).insert(left_ext)
+            
+            self.add_text(array_cell, first_x - ext_length, m4_y, f"D_R{row}")
+
+    def route_row_sources_m5(self, array_cell, row_transistors, row):
+        """
+        Route sources: M1 extension from CENTER downward to 1.5µm OUTSIDE transistor
+        """
+        
+        m1_width = self.dbu(METAL1_WIDTH)
+        m5_width = self.dbu(0.4)
+        
+        # Get terminal positions and bbox
+        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
+        terminal_info = self.analyze_transistor_terminals(transistor_cell)
+        
+        # Source X position (right edge of source M1)
+        source_x_offset = terminal_info['source_right_edge'] - terminal_info['transistor_center']
+        
+        # Extension parameters: from CENTER to 1.5µm OUTSIDE bottom edge
+        bbox_half_height = terminal_info['bbox_height'] / 2
+        extension_beyond = self.dbu(1)  # 1.5µm beyond transistor boundary
+        
+        print(f"    Row {row}: sources extend from CENTER to 1.5µm below transistor")
+        
+        source_m5_points = []
+        
+        for i, t in enumerate(row_transistors):
+            # Source X position
+            source_x = t['x'] + source_x_offset
+            
+            # Extension Y positions
+            ext_start_y = t['y']  # Start from transistor CENTER
+            ext_end_y = t['y'] - bbox_half_height - extension_beyond  # End 1.5µm below bottom edge
+            
+            # M1 vertical extension
+            m1_extension = db.Box(
+                source_x - m1_width//2,
+                ext_end_y - m1_width//2,
+                source_x + m1_width//2,
+                ext_start_y + m1_width//2
+            )
+            array_cell.shapes(self.layers['Metal1']).insert(m1_extension)
+            
+            # Via stack at end of extension (1.5µm outside transistor)
+            via_x = source_x
+            via_y = ext_end_y
+            
+            # Via1 (M1 to M2)
+            via1_size = self.dbu(VIA1_SIZE)
+            via1_box = db.Box(
+                via_x - via1_size//2, via_y - via1_size//2,
+                via_x + via1_size//2, via_y + via1_size//2
+            )
+            array_cell.shapes(self.layers['Via1']).insert(via1_box)
+            
+            # M2 pad
+            m2_size = self.dbu(METAL2_WIDTH)
+            m2_pad = db.Box(
+                via_x - m2_size//2, via_y - m2_size//2,
+                via_x + m2_size//2, via_y + m2_size//2
+            )
+            array_cell.shapes(self.layers['Metal2']).insert(m2_pad)
+            
+            # Via2 (M2 to M3)
+            via2_size = self.dbu(VIA2_SIZE)
+            via2_box = db.Box(
+                via_x - via2_size//2, via_y - via2_size//2,
+                via_x + via2_size//2, via_y + via2_size//2
+            )
+            array_cell.shapes(self.layers['Via2']).insert(via2_box)
+            
+            # M3 pad
+            m3_size = self.dbu(METAL3_WIDTH)
+            m3_pad = db.Box(
+                via_x - m3_size//2, via_y - m3_size//2,
+                via_x + m3_size//2, via_y + m3_size//2
+            )
+            array_cell.shapes(self.layers['Metal3']).insert(m3_pad)
+            
+            # Via3 (M3 to M4)
+            via3_size = self.dbu(0.26)
+            via3_box = db.Box(
+                via_x - via3_size//2, via_y - via3_size//2,
+                via_x + via3_size//2, via_y + via3_size//2
+            )
+            array_cell.shapes(self.layers['Via3']).insert(via3_box)
+            
+            # M4 pad
+            m4_size = self.dbu(0.4)
+            m4_pad = db.Box(
+                via_x - m4_size//2, via_y - m4_size//2,
+                via_x + m4_size//2, via_y + m4_size//2
+            )
+            array_cell.shapes(self.layers['Metal4']).insert(m4_pad)
+            
+            # Via4 (M4 to M5)
+            via4_size = self.dbu(0.26)
+            via4_box = db.Box(
+                via_x - via4_size//2, via_y - via4_size//2,
+                via_x + via4_size//2, via_y + via4_size//2
+            )
+            array_cell.shapes(self.layers['Via4']).insert(via4_box)
+            
+            # M5 pad
+            m5_pad = db.Box(
+                via_x - m5_width//2, via_y - m5_width//2,
+                via_x + m5_width//2, via_y + m5_width//2
+            )
+            array_cell.shapes(self.layers['Metal5']).insert(m5_pad)
+            
+            source_m5_points.append((via_x, via_y))
+        
+        # Connect all sources with M5 horizontal line
+        if len(source_m5_points) > 1:
+            m5_y = source_m5_points[0][1]
+            min_x = min(p[0] for p in source_m5_points)
+            max_x = max(p[0] for p in source_m5_points)
+            
+            m5_horizontal = db.Box(
+                min_x - m5_width//2,
+                m5_y - m5_width//2,
+                max_x + m5_width//2,
+                m5_y + m5_width//2
+            )
+            array_cell.shapes(self.layers['Metal5']).insert(m5_horizontal)
+            
+            print(f"    Connected {len(source_m5_points)} sources with M5 at 1.5µm below transistor")
+        
+        # Extension for pad connection
+        if source_m5_points:
+            ext_length = self.dbu(2.0)
+            last_x = source_m5_points[-1][0]
+            m5_y = source_m5_points[-1][1]
+            
+            right_ext = db.Box(
+                last_x - m5_width//2,
+                m5_y - m5_width//2,
+                last_x + ext_length + m5_width//2,
+                m5_y + m5_width//2
+            )
+            array_cell.shapes(self.layers['Metal5']).insert(right_ext)
+            
+            self.add_text(array_cell, last_x + ext_length, m5_y, f"S_R{row}")
+
+    def create_via_stack_to_m4(self, cell, x, y):
+        """Create via stack from M1 to M4"""
+        via_size = self.dbu(0.26)
+        
+        # Via1 (M1 to M2)
+        via1_box = db.Box(x - via_size//2, y - via_size//2,
+                        x + via_size//2, y + via_size//2)
+        cell.shapes(self.layers['Via1']).insert(via1_box)
+        
+        # M2 pad
+        m2_pad = via1_box.enlarged(self.dbu(0.05))
+        cell.shapes(self.layers['Metal2']).insert(m2_pad)
+        
+        # Via2 (M2 to M3)
+        via2_box = db.Box(x - via_size//2, y - via_size//2,
+                        x + via_size//2, y + via_size//2)
+        cell.shapes(self.layers['Via2']).insert(via2_box)
+        
+        # M3 pad
+        m3_pad = via2_box.enlarged(self.dbu(0.05))
+        cell.shapes(self.layers['Metal3']).insert(m3_pad)
+        
+        # Via3 (M3 to M4)
+        via3_box = db.Box(x - via_size//2, y - via_size//2,
+                        x + via_size//2, y + via_size//2)
+        cell.shapes(self.layers['Via3']).insert(via3_box)
+
+    def create_via_stack_to_m5(self, cell, x, y):
+        """Create via stack from M1 to M5"""
+        # First create stack to M4
+        self.create_via_stack_to_m4(cell, x, y)
+        
+        via_size = self.dbu(0.26)
+        
+        # M4 pad
+        m4_pad = db.Box(x - via_size//2 - self.dbu(0.05),
+                        y - via_size//2 - self.dbu(0.05),
+                        x + via_size//2 + self.dbu(0.05),
+                        y + via_size//2 + self.dbu(0.05))
+        cell.shapes(self.layers['Metal4']).insert(m4_pad)
+        
+        # Via4 (M4 to M5)
+        via4_box = db.Box(x - via_size//2, y - via_size//2,
+                        x + via_size//2, y + via_size//2)
+        cell.shapes(self.layers['Via4']).insert(via4_box)
 
     def create_gate_via_stack(self, cell, x, y):
         """Create via stack from Poly to Metal3"""
@@ -907,6 +1369,8 @@ class ScalableMismatchArray:
             self.route_gate_connections(nmos_array, nmos_info)
             nmos_trans = db.Trans(db.Point(0, 0))
             self.top_cell.insert(db.CellInstArray(nmos_array.cell_index(), nmos_trans))
+
+            self.route_drain_source_connections(nmos_array, nmos_info)
             
             print("✓ Generated NMOS array only")
         
