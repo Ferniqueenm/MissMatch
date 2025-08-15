@@ -186,9 +186,9 @@ class AdvancedRoutingGUI:
         self.root.title("Advanced Gate Routing Designer - Manhattan Routing")
         
         # Array parameters
-        self.array_rows = 2
-        self.array_cols = 2
-        self.dummy_mode = 'sides'  # 'none', 'sides', or 'full'
+        self.array_rows = 5
+        self.array_cols = 5
+        self.dummy_mode = 'full'  # 'none', 'sides', or 'full'
         
         # ====== CONFIGURABLE TRANSISTOR DIMENSIONS (µm) ======
         # These should match your PDK requirements
