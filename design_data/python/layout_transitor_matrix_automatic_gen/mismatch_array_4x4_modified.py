@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
 """
-Transistor array 4x4 for mismatch evaluation with shared guardrings
-IHP SG13G2 PDK - KLayout
-MODIFIED VERSION - Accepts pattern from GUI
-
-Features:
-- 4x4 array with side dummies only
-- Shared guardring borders between adjacent transistors
-- S, D, B shared across all transistors
-- Independent gates routed without overlap
-- Pattern can be loaded from external source (GUI)
+SCALABLE MISMATCH ARRAY GENERATOR - NMOS AND PMOS SUPPORT
+Modified version with configurable dimensions and full PMOS support
 """
 
 import pya
@@ -17,22 +9,25 @@ import klayout.db as db
 import sys
 import json
 
-# ========== CONFIGURATION ==========
-ARRAY_SIZE = 4          # 4x4 array (change this to scale: 6, 8, 10, etc.)
-MULTIPLICATION_FACTOR = 1
-TRANSISTOR_W = 1.03*MULTIPLICATION_FACTOR    # µm - MATCHED to GUI value
-TRANSISTOR_L = 0.35*MULTIPLICATION_FACTOR    # µm
-TRANSISTOR_NG = 1       # fingers
+# ========== SCALABLE CONFIGURATION ==========
+# These values should match what's configured in the GUI
 
-# Spacings (µm)
-GUARDRING_WIDTH = 0.5*MULTIPLICATION_FACTOR       # Guardring width
-GUARDRING_SPACING = 0.8*MULTIPLICATION_FACTOR     # Space between transistor and guardring
-GUARDRING_SHARE = True      # Share guardring borders
+# Default transistor dimensions (will be overridden if pattern file contains them)
+TRANSISTOR_W = 1.03      # µm - Width (configurable)
+TRANSISTOR_L = 0.35      # µm - Length (configurable)
+TRANSISTOR_NG = 1        # Number of fingers
+
+# Spacing parameters (µm)
+GUARDRING_WIDTH = 0.5       # Guardring width
+GUARDRING_SPACING = 2.0     # Distance from transistor to guardring (configurable, default 2µm)
+
+# Array size (will be read from pattern file)
+ARRAY_SIZE = 4              # Default 4x4 array
 
 # Design rules IHP SG13G2
 METAL1_WIDTH = 0.28
 METAL2_WIDTH = 0.36
-METAL3_WIDTH = 0.20      # MATCHED to GUI value (0.2 µm)
+METAL3_WIDTH = 0.20
 POLY_WIDTH = 0.13
 VIA1_SIZE = 0.26
 VIA2_SIZE = 0.26
@@ -45,96 +40,122 @@ LIB_NAME = 'SG13_dev'
 
 # Layers
 LAYER_MAP = {
-    'Activ':    (1, 0),
-    'GatPoly':  (5, 0),
-    'Cont':     (6, 0),
-    'nSD':      (7, 0),
-    'Metal1':   (8, 0),
-    'Metal2':   (10, 0),
-    'Metal3':   (30, 0),
-    'pSD':      (14, 0),
-    'Via1':     (19, 0),
-    'Via2':     (29, 0),
-    'NWell':    (31, 0),
-    'Ptap':     (32, 0),
-    'Ntap':     (33, 0),  
-    'TEXT':     (63, 0),
+    'Activ':    (1, 0),   # Active area
+    'GatPoly':  (5, 0),   # Gate poly
+    'Cont':     (6, 0),   # Contact (not "locint" as in IHP script)
+    'nSD':      (7, 0),   # N+ implant
+    'Metal1':   (8, 0),   # Metal 1
+    'Metal2':   (10, 0),  # Metal 2
+    'Metal3':   (30, 0),  # Metal 3
+    'pSD':      (14, 0),  # P+ implant
+    'Via1':     (19, 0),  # Via 1
+    'Via2':     (29, 0),  # Via 2
+    'NWell':    (31, 0),  # N-well
+    'Via3':     (49, 0),  # Via 3 (M3-M4) - CORRECTED
+    'Metal4':   (50, 0),  # Metal 4 - CORRECTED
+    'Via4':     (66, 0),  # Via 4 (M4-M5) - CORRECTED
+    'Metal5':   (67, 0),  # Metal 5 - CORRECTED
+    # Ptap and Ntap are NOT used by IHP for guard rings!
+    # 'Ptap':     (32, 0),  # Not used
+    # 'Ntap':     (33, 0),  # Not used
+    'TEXT':     (63, 0),  # Text layer
 }
 
-def load_pattern_data():
-    """Load routing pattern from external source or use default"""
+def get_default_pattern():
+    """Return default pattern if no pattern file is found"""
+    return {}
+
+def load_pattern_and_config():
+    """Load pattern and extract configuration if available - Phase 2 & 3 version"""
+    global TRANSISTOR_W, TRANSISTOR_L, GUARDRING_SPACING, ARRAY_SIZE
     
-    # Option 1: Pattern passed as global variable
-    if 'custom_pattern' in globals():
-        print("✓ Using custom pattern from global variable")
-        return custom_pattern
+    # Initialize return data
+    full_data = {
+        'pattern_data': {},
+        'metadata': {}
+    }
     
-    # Option 2: Pattern file specified
-    if 'pattern_file' in globals():
-        print(f"✓ Loading pattern from file: {pattern_file}")
-        try:
-            with open(pattern_file, 'r') as f:
-                data = json.load(f)
-                json_pattern = data.get('pattern_data', {})
-                
-                # Convert string keys back to tuples
-                pattern = {}
-                for str_key, value in json_pattern.items():
-                    row, col = map(int, str_key.split(','))
-                    pattern[(row, col)] = value
-                
-                return pattern
-        except Exception as e:
-            print(f"⚠ Error loading pattern file: {e}")
-    
-    # Option 3: Check for temp_pattern.json (from GUI)
+    # Try to load pattern file
     try:
         with open('temp_pattern.json', 'r') as f:
             data = json.load(f)
-            json_pattern = data.get('pattern_data', {})
-            
-            # Convert string keys back to tuples
-            pattern = {}
-            for str_key, value in json_pattern.items():
+            full_data = data
+            print(f"✓ Loaded temp_pattern.json")
+    except Exception as e:
+        print(f"⚠ Could not load temp_pattern.json: {e}")
+    
+    # Extract config from metadata
+    config = full_data.get('metadata', {})
+    
+    # Apply configuration if available
+    if config:
+        if 'transistor_W' in config:
+            TRANSISTOR_W = config['transistor_W']
+            print(f"✓ Loaded W={TRANSISTOR_W}µm from pattern file")
+        
+        if 'transistor_L' in config:
+            TRANSISTOR_L = config['transistor_L']
+            print(f"✓ Loaded L={TRANSISTOR_L}µm from pattern file")
+        
+        if 'guardring_spacing' in config:
+            GUARDRING_SPACING = config['guardring_spacing']
+            print(f"✓ Loaded guardring_spacing={GUARDRING_SPACING}µm from pattern file")
+        
+        if 'array_rows' in config:
+            ARRAY_SIZE = config['array_rows']
+            print(f"✓ Loaded array_size={ARRAY_SIZE}x{ARRAY_SIZE} from pattern file")
+        
+        # Phase 2: Handle dummy mode
+        if 'dummy_mode' in config:
+            print(f"✓ Dummy mode: {config['dummy_mode']}")
+        elif 'has_dummies' in config:
+            # Backward compatibility
+            dummy_mode = 'sides' if config['has_dummies'] else 'none'
+            config['dummy_mode'] = dummy_mode
+            print(f"✓ Converted has_dummies to dummy_mode: {dummy_mode}")
+        
+        if 'device_type' in config:
+            print(f"✓ Device type: {config['device_type']}")
+    
+    # Convert pattern keys from strings to tuples
+    pattern_data = full_data.get('pattern_data', {})
+    if pattern_data:
+        pattern = {}
+        for str_key, value in pattern_data.items():
+            if isinstance(str_key, str) and ',' in str_key:
                 row, col = map(int, str_key.split(','))
                 pattern[(row, col)] = value
-            
-            print("✓ Found temp_pattern.json from GUI")
-            return pattern
-    except:
-        pass
+            else:
+                pattern[str_key] = value
+        full_data['pattern_data'] = pattern
     
-    # Option 4: Default pattern
-    print("✓ Using default pattern")
-    return {
-        (0, 0): {'offset_y': -0.20, 'h_length': 0.60, 'v_length': 5.20, 'goes_up': True},
-        (0, 1): {'offset_y': -0.15, 'h_length': 1.20, 'v_length': 5.15, 'goes_up': True},
-        (0, 2): {'offset_y': -0.10, 'h_length': 1.80, 'v_length': 5.10, 'goes_up': True},
-        (0, 3): {'offset_y': -0.05, 'h_length': 2.40, 'v_length': 5.05, 'goes_up': True},
-        
-        (1, 0): {'offset_y': -0.10, 'h_length': 0.50, 'v_length': 4.60, 'goes_up': True},
-        (1, 1): {'offset_y': -0.05, 'h_length': 1.10, 'v_length': 4.55, 'goes_up': True},
-        (1, 2): {'offset_y':  0.00, 'h_length': 1.70, 'v_length': 4.50, 'goes_up': True},
-        (1, 3): {'offset_y':  0.05, 'h_length': 2.30, 'v_length': 4.45, 'goes_up': True},
-        
-        (2, 0): {'offset_y':  0.05, 'h_length': 0.60, 'v_length': 4.45, 'goes_up': False},
-        (2, 1): {'offset_y':  0.00, 'h_length': 1.20, 'v_length': 4.50, 'goes_up': False},
-        (2, 2): {'offset_y': -0.05, 'h_length': 1.80, 'v_length': 4.55, 'goes_up': False},
-        (2, 3): {'offset_y': -0.10, 'h_length': 2.40, 'v_length': 4.60, 'goes_up': False},
-        
-        (3, 0): {'offset_y':  0.15, 'h_length': 0.50, 'v_length': 5.05, 'goes_up': False},
-        (3, 1): {'offset_y':  0.10, 'h_length': 1.10, 'v_length': 5.10, 'goes_up': False},
-        (3, 2): {'offset_y':  0.05, 'h_length': 1.70, 'v_length': 5.15, 'goes_up': False},
-        (3, 3): {'offset_y':  0.00, 'h_length': 2.30, 'v_length': 5.20, 'goes_up': False},
-    }
+    return full_data
 
-class MismatchArray4x4:
-    """Generator for 4x4 array with shared guardrings"""
+class ScalableMismatchArray:
+    """Scalable mismatch array generator - NMOS and PMOS support"""
     
     def __init__(self):
         print("\n" + "="*60)
-        print("MISMATCH ARRAY GENERATOR - INITIALIZATION")
+        print("SCALABLE MISMATCH ARRAY GENERATOR")
         print("="*60)
+        
+        # Load configuration and pattern
+        self.full_data = load_pattern_and_config()
+        self.pattern_data = self.full_data.get('pattern_data', {})
+        self.metadata = self.full_data.get('metadata', {})
+        self.device_type = self.metadata.get('device_type', 'nmos')
+        self.dummy_mode = self.metadata.get('dummy_mode', 'sides')
+        
+        # Display current configuration
+        print(f"\nConfiguration:")
+        print(f"  Device Type: {self.device_type}")
+        print(f"  Dummy Mode: {self.dummy_mode}")
+        print(f"  Transistor W: {TRANSISTOR_W} µm")
+        print(f"  Transistor L: {TRANSISTOR_L} µm")
+        print(f"  Array size: {ARRAY_SIZE}x{ARRAY_SIZE}")
+        
+        # Calculate pitches
+        self.calculate_pitches()
         
         # Load library
         self.lib = pya.Library.library_by_name(LIB_NAME)
@@ -144,7 +165,16 @@ class MismatchArray4x4:
         # Create layout
         self.layout = db.Layout(True)
         self.layout.dbu = 0.001  # 1nm
-        self.top_cell = self.layout.create_cell('MismatchArray4x4_SharedGR')
+        
+        # Create top cell with appropriate name
+        if self.device_type == 'both':
+            cell_name = f'MismatchArray_{ARRAY_SIZE}x{ARRAY_SIZE}_BOTH'
+        elif self.device_type == 'pmos':
+            cell_name = f'MismatchArray_{ARRAY_SIZE}x{ARRAY_SIZE}_PMOS'
+        else:
+            cell_name = f'MismatchArray_{ARRAY_SIZE}x{ARRAY_SIZE}_NMOS'
+        
+        self.top_cell = self.layout.create_cell(cell_name)
         
         # Create layer indices
         self.layers = {}
@@ -152,8 +182,6 @@ class MismatchArray4x4:
             self.layers[name] = self.layout.layer(layer, datatype)
         
         print(f"✓ Layout initialized")
-        print(f"✓ Library: {LIB_NAME}")
-        print(f"✓ Database unit: {self.layout.dbu} µm")
         
         # Debug tracking
         self.debug_info = {
@@ -163,18 +191,113 @@ class MismatchArray4x4:
             'pattern_verification': []
         }
     
+    def analyze_transistor_terminals(self, transistor_cell):
+        """
+        Analyze transistor PCell to find actual terminal positions and transistor boundaries
+        """
+        print("\n  Analyzing transistor terminals...")
+        
+        # Get transistor bbox
+        t_bbox = transistor_cell.bbox()
+        
+        terminals = {
+            # Transistor boundaries (in database units)
+            'bbox_left': t_bbox.left,
+            'bbox_right': t_bbox.right,
+            'bbox_top': t_bbox.top,
+            'bbox_bottom': t_bbox.bottom,
+            'bbox_width': t_bbox.width(),
+            'bbox_height': t_bbox.height(),
+            
+            # Terminal positions (will be filled)
+            'drain_left_edge': None,
+            'drain_right_edge': None,
+            'drain_center': None,
+            'source_left_edge': None,
+            'source_right_edge': None,
+            'source_center': None,
+            'gate_center': t_bbox.center().x,
+            'transistor_center': t_bbox.center().x
+        }
+        
+        # Find Metal1 shapes (drain/source)
+        metal1_shapes = []
+        for shape in transistor_cell.shapes(self.layers['Metal1']).each():
+            if shape.is_box():
+                box = shape.box
+                metal1_shapes.append({
+                    'left': box.left,
+                    'right': box.right,
+                    'top': box.top,
+                    'bottom': box.bottom,
+                    'center_x': box.center().x,
+                    'center_y': box.center().y,
+                    'width': box.width(),
+                    'height': box.height()
+                })
+        
+        # Identify drain (leftmost M1) and source (rightmost M1)
+        if metal1_shapes:
+            # Sort by center X position
+            metal1_shapes.sort(key=lambda s: s['center_x'])
+            
+            # Leftmost M1 is drain
+            drain_shape = metal1_shapes[0]
+            terminals['drain_left_edge'] = drain_shape['left']
+            terminals['drain_right_edge'] = drain_shape['right']
+            terminals['drain_center'] = drain_shape['center_x']
+            terminals['drain_top'] = drain_shape['top']
+            terminals['drain_bottom'] = drain_shape['bottom']
+            
+            # Rightmost M1 is source
+            source_shape = metal1_shapes[-1]
+            terminals['source_left_edge'] = source_shape['left']
+            terminals['source_right_edge'] = source_shape['right']
+            terminals['source_center'] = source_shape['center_x']
+            terminals['source_top'] = source_shape['top']
+            terminals['source_bottom'] = source_shape['bottom']
+            
+            print(f"    Transistor bbox: width={t_bbox.width()*self.layout.dbu:.3f}µm, height={t_bbox.height()*self.layout.dbu:.3f}µm")
+            print(f"    Drain M1: x={drain_shape['center_x']*self.layout.dbu:.3f}µm")
+            print(f"    Source M1: x={source_shape['center_x']*self.layout.dbu:.3f}µm")
+        
+        # Fallback if detection failed
+        if terminals['drain_left_edge'] is None:
+            # Estimate positions
+            terminals['drain_center'] = t_bbox.center().x - t_bbox.width() * 0.3
+            terminals['drain_left_edge'] = terminals['drain_center'] - self.dbu(0.14)
+            terminals['drain_right_edge'] = terminals['drain_center'] + self.dbu(0.14)
+            print(f"    Using fallback positions")
+        
+        return terminals
+
+
+    def calculate_pitches(self):
+        """Calculate pitches based on transistor dimensions and spacing"""
+        # Get actual transistor bbox size (this is approximate)
+        # The actual size will be determined when we create the PCell
+        estimated_t_width = TRANSISTOR_W
+        estimated_t_height = TRANSISTOR_L * 4  # Approximate height
+        
+        # Calculate pitches
+        # Pitch = transistor_dimension + 2*spacing + guardring_width
+        self.pitch_x = estimated_t_width + 2 * GUARDRING_SPACING + GUARDRING_WIDTH
+        self.pitch_y = estimated_t_height + 2 * GUARDRING_SPACING + GUARDRING_WIDTH
+        
+        print(f"  Calculated pitch X: {self.pitch_x:.3f} µm")
+        print(f"  Calculated pitch Y: {self.pitch_y:.3f} µm")
+    
     def dbu(self, value_um):
         """Convert µm to database units"""
         return int(value_um / self.layout.dbu)
     
     def create_transistor_pcell(self, transistor_type='nmos'):
-        """Create transistor PCell"""
-        pcell_name = transistor_type  # 'nmos' o 'pmos'
+        """Create transistor PCell - FIXED to accept type parameter"""
+        pcell_name = transistor_type
         
-        # Buscar la declaración de la PCell
+        # Find PCell declaration
         pcell_decl = self.lib.layout().pcell_declaration(pcell_name)
         if not pcell_decl:
-            # Listar PCells disponibles para debug
             print(f"\n⚠ PCell '{pcell_name}' not found")
             print("Available PCells in library:")
             for i in range(self.lib.layout().pcells()):
@@ -183,36 +306,33 @@ class MismatchArray4x4:
                     print(f"  - {pd.name()}")
             raise Exception(f"PCell {pcell_name} not found in library {LIB_NAME}")
         
-        # Parámetros para la PCell como strings
+        # Parameters for PCell
         params = {
             'w': f'{TRANSISTOR_W}u',
             'l': f'{TRANSISTOR_L}u',
             'ng': str(TRANSISTOR_NG)
         }
         
-        # Crear instancia de la PCell usando add_pcell_variant
+        # Create PCell instance
         return self.layout.add_pcell_variant(self.lib, pcell_decl.id(), params)
     
     def calculate_shared_guardring_array(self, transistor_bbox, rows, cols):
         """Calculate dimensions for array with shared guardrings"""
         
-        # Calculate actual pitches - MUST match GUI values
-        pitch_x = self.dbu(3.13)  # Exact value from GUI
-        pitch_y = self.dbu(3.46)  # Exact value from GUI
+        # Get actual transistor dimensions
+        actual_t_width = transistor_bbox.width() * self.layout.dbu
+        actual_t_height = transistor_bbox.height() * self.layout.dbu
         
-        # Verify calculation
-        calculated_pitch_x = transistor_bbox.width() + 2 * self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
-        calculated_pitch_y = transistor_bbox.height() + 2 * self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+        print(f"\nActual transistor dimensions:")
+        print(f"  Width: {actual_t_width:.3f} µm")
+        print(f"  Height: {actual_t_height:.3f} µm")
         
-        print(f"\nPitch verification:")
-        print(f"  GUI pitch X: 3.13 µm, calculated: {calculated_pitch_x * self.layout.dbu:.2f} µm")
-        print(f"  GUI pitch Y: 3.46 µm, calculated: {calculated_pitch_y * self.layout.dbu:.2f} µm")
+        # Recalculate pitches with actual dimensions
+        pitch_x = self.dbu(actual_t_width + 2 * GUARDRING_SPACING + GUARDRING_WIDTH)
+        pitch_y = self.dbu(actual_t_height + 2 * GUARDRING_SPACING + GUARDRING_WIDTH)
         
-        # Use GUI values
-        if abs(calculated_pitch_x - pitch_x) > self.dbu(0.01):
-            print(f"  ⚠ Using GUI pitch_x value instead of calculated")
-        if abs(calculated_pitch_y - pitch_y) > self.dbu(0.01):
-            print(f"  ⚠ Using GUI pitch_y value instead of calculated")
+        print(f"  Final pitch X: {pitch_x * self.layout.dbu:.3f} µm")
+        print(f"  Final pitch Y: {pitch_y * self.layout.dbu:.3f} µm")
         
         gr_width = self.dbu(GUARDRING_WIDTH)
         gr_spacing = self.dbu(GUARDRING_SPACING)
@@ -231,268 +351,962 @@ class MismatchArray4x4:
             'total_width': total_width,
             'total_height': total_height,
             'cell_inner_width': cell_inner_width,
-            'cell_inner_height': cell_inner_height
+            'cell_inner_height': cell_inner_height,
+            't_width': transistor_bbox.width(),
+            't_height': transistor_bbox.height()
         }
     
-    def create_shared_guardring_structure(self, array_cell, geom, rows, cols, transistor_type):
-        """Create shared guardring structure for entire array"""
-        print("\nCreating shared guardring structure...")
+    def create_shared_guardring_structure(self, array_cell, geom, rows, cols):
+        """
+        Create shared guardring structure for NMOS array
+        CORRECTED based on official IHP implementation:
+        - Uses pSD (NO Ptap)
+        - Uses Activ
+        - Uses Cont
+        - Uses Metal1
+        - NO NWell for substrate contact
+        """
+        print("\nCreating shared guardring structure for NMOS (IHP-compliant)...")
         
         gr_width = geom['gr_width']
+        
+        # For NMOS array: p-type substrate contact
+        # Based on IHP script: uses pSD + Activ (NO Ptap!)
         
         # Create vertical guardring stripes
         for col in range(cols + 1):
             x = col * geom['pitch_x']
-            stripe = db.Box(
+            stripe_box = db.Box(
                 x, 0,
                 x + gr_width, geom['total_height']
             )
-            array_cell.shapes(self.layers['Activ']).insert(stripe)
             
-            if transistor_type == 'nmos':
-                array_cell.shapes(self.layers['pSD']).insert(stripe)
-                array_cell.shapes(self.layers['Ptap']).insert(stripe)
-            else:
-                array_cell.shapes(self.layers['nSD']).insert(stripe)
-                array_cell.shapes(self.layers['Ntap']).insert(stripe)
+            # Active area (required for guard ring)
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            
+            # P+ implant for substrate contact (pSD layer)
+            array_cell.shapes(self.layers['pSD']).insert(stripe_box)
+            
+            # NO Ptap layer - IHP doesn't use it!
+            # NO NWell - substrate contacts don't need it
         
         # Create horizontal guardring stripes
         for row in range(rows + 1):
             y = row * geom['pitch_y']
-            stripe = db.Box(
+            stripe_box = db.Box(
                 0, y,
                 geom['total_width'], y + gr_width
             )
-            array_cell.shapes(self.layers['Activ']).insert(stripe)
             
-            if transistor_type == 'nmos':
-                array_cell.shapes(self.layers['pSD']).insert(stripe)
-                array_cell.shapes(self.layers['Ptap']).insert(stripe)
-            else:
-                array_cell.shapes(self.layers['nSD']).insert(stripe)
-                array_cell.shapes(self.layers['Ntap']).insert(stripe)
-        
-        # Add NWell for PMOS
-        if transistor_type == 'pmos':
-            nwell_box = db.Box(
-                -self.dbu(0.5), -self.dbu(0.5),
-                geom['total_width'] + self.dbu(0.5),
-                geom['total_height'] + self.dbu(0.5)
-            )
-            array_cell.shapes(self.layers['NWell']).insert(nwell_box)
+            # Active area
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            
+            # P+ implant for substrate contact
+            array_cell.shapes(self.layers['pSD']).insert(stripe_box)
+            
+            # NO Ptap layer - IHP doesn't use it!
         
         # Add contacts to guardring intersections
         cont_size = self.dbu(CONT_SIZE)
+        m1_enc = self.dbu(0.05)  # Metal1 enclosure of contact
+        
         for row in range(rows + 1):
             for col in range(cols + 1):
-                x = col * geom['pitch_x'] + gr_width // 2
-                y = row * geom['pitch_y'] + gr_width // 2
+                # Center of guardring intersection
+                x_center = col * geom['pitch_x'] + gr_width // 2
+                y_center = row * geom['pitch_y'] + gr_width // 2
                 
+                # Contact (Cont layer)
                 cont_box = db.Box(
-                    x - cont_size//2, y - cont_size//2,
-                    x + cont_size//2, y + cont_size//2
+                    x_center - cont_size//2, 
+                    y_center - cont_size//2,
+                    x_center + cont_size//2, 
+                    y_center + cont_size//2
                 )
                 array_cell.shapes(self.layers['Cont']).insert(cont_box)
                 
-                m1_box = cont_box.enlarged(self.dbu(0.05))
+                # Metal1 over contact (with enclosure)
+                m1_box = db.Box(
+                    x_center - cont_size//2 - m1_enc,
+                    y_center - cont_size//2 - m1_enc,
+                    x_center + cont_size//2 + m1_enc,
+                    y_center + cont_size//2 + m1_enc
+                )
                 array_cell.shapes(self.layers['Metal1']).insert(m1_box)
         
-        print(f"✓ Created shared guardring grid: {cols+1} x {rows+1} stripes")
-    
-    def create_array_with_shared_guardrings(self, transistor_type='nmos'):
-        """Create complete array with shared guardrings"""
+        print(f"✓ Created substrate contact guardring: {cols+1} x {rows+1} stripes")
+        print(f"  Layers used: Activ, pSD, Cont, Metal1")
+
+
+    def create_shared_guardring_structure_pmos(self, array_cell, geom, rows, cols):
+        """
+        Create N-well guardring for PMOS - CORRECT IHP IMPLEMENTATION
+        Uses: NWell + Activ + nSD + Cont + Metal1 (NO Ntap!)
+        """
+        print("\nCreating N-well guardring structure for PMOS (IHP-compliant)...")
+        
+        gr_width = geom['gr_width']
+        
+        # First create N-well for entire PMOS array
+        nwell_margin = self.dbu(0.5)
+        nwell_box = db.Box(
+            -nwell_margin, 
+            -nwell_margin,
+            geom['total_width'] + nwell_margin,
+            geom['total_height'] + nwell_margin
+        )
+        array_cell.shapes(self.layers['NWell']).insert(nwell_box)
+        
+        # Create guardring stripes (N-well contact)
+        for col in range(cols + 1):
+            x = col * geom['pitch_x']
+            stripe_box = db.Box(
+                x, 0,
+                x + gr_width, geom['total_height']
+            )
+            
+            # Active area
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            
+            # N+ implant for N-well contact (nSD layer)
+            array_cell.shapes(self.layers['nSD']).insert(stripe_box)
+            
+            # NO Ntap layer - IHP doesn't use it!
+        
+        # Horizontal stripes
+        for row in range(rows + 1):
+            y = row * geom['pitch_y']
+            stripe_box = db.Box(
+                0, y,
+                geom['total_width'], y + gr_width
+            )
+            
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            array_cell.shapes(self.layers['nSD']).insert(stripe_box)
+        
+        # Add contacts (same as NMOS)
+        cont_size = self.dbu(CONT_SIZE)
+        m1_enc = self.dbu(0.05)
+        
+        for row in range(rows + 1):
+            for col in range(cols + 1):
+                x_center = col * geom['pitch_x'] + gr_width // 2
+                y_center = row * geom['pitch_y'] + gr_width // 2
+                
+                cont_box = db.Box(
+                    x_center - cont_size//2, 
+                    y_center - cont_size//2,
+                    x_center + cont_size//2, 
+                    y_center + cont_size//2
+                )
+                array_cell.shapes(self.layers['Cont']).insert(cont_box)
+                
+                m1_box = db.Box(
+                    x_center - cont_size//2 - m1_enc,
+                    y_center - cont_size//2 - m1_enc,
+                    x_center + cont_size//2 + m1_enc,
+                    y_center + cont_size//2 + m1_enc
+                )
+                array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+        
+        print(f"✓ Created N-well contact guardring: {cols+1} x {rows+1} stripes")
+        print(f"  Layers used: NWell, Activ, nSD, Cont, Metal1")
+
+
+    def create_nmos_array(self):
+        """Create NMOS array with configurable dummy arrangement - Phase 2"""
         print(f"\n{'='*60}")
-        print(f"Creating {transistor_type.upper()} array {ARRAY_SIZE}x{ARRAY_SIZE}")
+        print(f"Creating NMOS array {ARRAY_SIZE}x{ARRAY_SIZE}")
         print(f"{'='*60}")
         
-        array_cell = self.layout.create_cell(f'{transistor_type}_array_{ARRAY_SIZE}x{ARRAY_SIZE}')
+        array_cell = self.layout.create_cell(f'nmos_array_{ARRAY_SIZE}x{ARRAY_SIZE}')
         
-        transistor_pcell = self.create_transistor_pcell(transistor_type)
+        # Get dummy mode from metadata
+        dummy_mode = self.metadata.get('dummy_mode', 'sides')
+        print(f"  Dummy mode: {dummy_mode}")
+        
+        # Calculate total dimensions based on dummy mode
+        if dummy_mode == 'none':
+            total_rows = ARRAY_SIZE
+            total_cols = ARRAY_SIZE
+        elif dummy_mode == 'sides':
+            total_rows = ARRAY_SIZE
+            total_cols = ARRAY_SIZE + 2
+        else:  # full ring
+            total_rows = ARRAY_SIZE + 2
+            total_cols = ARRAY_SIZE + 2
+        
+        print(f"  Total array dimensions: {total_rows}x{total_cols}")
+        print(f"  Active array: {ARRAY_SIZE}x{ARRAY_SIZE}")
+        
+        # Create transistor PCell
+        transistor_pcell = self.create_transistor_pcell('nmos')
         transistor_cell = self.layout.cell(transistor_pcell)
         t_bbox = transistor_cell.bbox()
         
-        total_cols = ARRAY_SIZE + 2  # Add dummy columns
-        total_rows = ARRAY_SIZE
         geom = self.calculate_shared_guardring_array(t_bbox, total_rows, total_cols)
         
-        self.create_shared_guardring_structure(array_cell, geom, total_rows, total_cols, transistor_type)
+        # Create guardring structure
+        self.create_shared_guardring_structure(array_cell, geom, total_rows, total_cols)
         
+        # Place transistors
         transistor_info = []
         active_count = 0
         dummy_count = 0
         
         for row in range(total_rows):
-            row_info = []
             for col in range(total_cols):
+                # Determine if dummy based on mode
+                is_dummy = False
+                
+                if dummy_mode == 'sides':
+                    is_dummy = (col == 0 or col == total_cols-1)
+                elif dummy_mode == 'full':
+                    is_dummy = (row == 0 or row == total_rows-1 or 
+                            col == 0 or col == total_cols-1)
+                
+                # Calculate center position
                 cell_center_x = col * geom['pitch_x'] + geom['gr_width'] + geom['cell_inner_width'] // 2
                 cell_center_y = row * geom['pitch_y'] + geom['gr_width'] + geom['cell_inner_height'] // 2
                 
-                trans = db.Trans(db.Point(cell_center_x - t_bbox.width()//2, 
-                                        cell_center_y - t_bbox.height()//2))
+                # Position transistor
+                bbox_center_x = t_bbox.center().x
+                bbox_center_y = t_bbox.center().y
+                
+                trans_x = cell_center_x - bbox_center_x
+                trans_y = cell_center_y - bbox_center_y
+                
+                trans = db.Trans(db.Point(trans_x, trans_y))
                 array_cell.insert(db.CellInstArray(transistor_pcell, trans))
                 
-                is_dummy = (col == 0 or col == total_cols - 1)
+                # Calculate active indices
+                if is_dummy:
+                    active_row = -1
+                    active_col = -1
+                else:
+                    if dummy_mode == 'none':
+                        active_row = row
+                        active_col = col
+                    elif dummy_mode == 'sides':
+                        active_row = row
+                        active_col = col - 1
+                    else:  # full ring
+                        active_row = row - 1
+                        active_col = col - 1
                 
                 info = {
                     'row': row,
                     'col': col,
-                    'active_row': row,
-                    'active_col': col - 1 if not is_dummy else -1,
+                    'active_row': active_row,
+                    'active_col': active_col,
                     'x': cell_center_x,
                     'y': cell_center_y,
                     'is_dummy': is_dummy,
-                    'gate_x': cell_center_x * self.layout.dbu,  # Convert to µm
-                    'gate_y': cell_center_y * self.layout.dbu   # Convert to µm
+                    'gate_x': cell_center_x * self.layout.dbu,
+                    'gate_y': cell_center_y * self.layout.dbu
                 }
                 
-                row_info.append(info)
                 transistor_info.append(info)
                 
                 if is_dummy:
-                    self.debug_info['dummy_count'] += 1
                     dummy_count += 1
+                    self.debug_info['dummy_count'] += 1
                 else:
-                    self.debug_info['transistor_count'] += 1
                     active_count += 1
-            
-            transistor_info.extend(row_info)
+                    self.debug_info['transistor_count'] += 1
         
         print(f"✓ Placed {active_count} active + {dummy_count} dummy transistors")
         
+        if dummy_mode == 'full':
+            print(f"Full dummy ring: top/bottom/left/right borders")
+        elif dummy_mode == 'sides':
+            print(f"Side dummies only: left/right columns")
+        else:
+            print(f"No dummy transistors")
+        
         return array_cell, transistor_info, geom
+
+    def create_pmos_array(self):
+        """Create PMOS array with configurable dummy arrangement - Phase 2"""
+        print(f"\n{'='*60}")
+        print(f"Creating PMOS array {ARRAY_SIZE}x{ARRAY_SIZE}")
+        print(f"{'='*60}")
+        
+        array_cell = self.layout.create_cell(f'pmos_array_{ARRAY_SIZE}x{ARRAY_SIZE}')
+        
+        # Get dummy mode from metadata
+        dummy_mode = self.metadata.get('dummy_mode', 'sides')
+        print(f"  Dummy mode: {dummy_mode}")
+        
+        # Calculate total dimensions based on dummy mode
+        if dummy_mode == 'none':
+            total_rows = ARRAY_SIZE
+            total_cols = ARRAY_SIZE
+        elif dummy_mode == 'sides':
+            total_rows = ARRAY_SIZE
+            total_cols = ARRAY_SIZE + 2
+        else:  # full ring
+            total_rows = ARRAY_SIZE + 2
+            total_cols = ARRAY_SIZE + 2
+        
+        # Create PMOS transistor PCell
+        transistor_pcell = self.create_transistor_pcell('pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
+        t_bbox = transistor_cell.bbox()
+        
+        geom = self.calculate_shared_guardring_array(t_bbox, total_rows, total_cols)
+        
+        # Create N-well guardring structure for PMOS
+        self.create_shared_guardring_structure_pmos(array_cell, geom, total_rows, total_cols)
+        
+        # Place transistors (same logic as NMOS)
+        transistor_info = []
+        active_count = 0
+        dummy_count = 0
+        
+        for row in range(total_rows):
+            for col in range(total_cols):
+                # Determine if dummy based on mode
+                is_dummy = False
+                
+                if dummy_mode == 'sides':
+                    is_dummy = (col == 0 or col == total_cols-1)
+                elif dummy_mode == 'full':
+                    is_dummy = (row == 0 or row == total_rows-1 or 
+                            col == 0 or col == total_cols-1)
+                
+                # Calculate center position
+                cell_center_x = col * geom['pitch_x'] + geom['gr_width'] + geom['cell_inner_width'] // 2
+                cell_center_y = row * geom['pitch_y'] + geom['gr_width'] + geom['cell_inner_height'] // 2
+                
+                # Position transistor
+                bbox_center_x = t_bbox.center().x
+                bbox_center_y = t_bbox.center().y
+                
+                trans_x = cell_center_x - bbox_center_x
+                trans_y = cell_center_y - bbox_center_y
+                
+                trans = db.Trans(db.Point(trans_x, trans_y))
+                array_cell.insert(db.CellInstArray(transistor_pcell, trans))
+                
+                # Calculate active indices
+                if is_dummy:
+                    active_row = -1
+                    active_col = -1
+                else:
+                    if dummy_mode == 'none':
+                        active_row = row
+                        active_col = col
+                    elif dummy_mode == 'sides':
+                        active_row = row
+                        active_col = col - 1
+                    else:  # full ring
+                        active_row = row - 1
+                        active_col = col - 1
+                
+                info = {
+                    'row': row,
+                    'col': col,
+                    'active_row': active_row,
+                    'active_col': active_col,
+                    'x': cell_center_x,
+                    'y': cell_center_y,
+                    'is_dummy': is_dummy,
+                    'gate_x': cell_center_x * self.layout.dbu,
+                    'gate_y': cell_center_y * self.layout.dbu
+                }
+                
+                transistor_info.append(info)
+                
+                if is_dummy:
+                    dummy_count += 1
+                else:
+                    active_count += 1
+        
+        print(f"✓ Placed {active_count} active + {dummy_count} dummy PMOS transistors")
+        
+        return array_cell, transistor_info, geom
+
+    def create_route_from_points(self, array_cell, gate_x, gate_y, route_points, m3_width):
+        """
+        Create route from points - Y-INVERSION ONLY
+        """
+        segments = []
+        
+        if len(route_points) < 2:
+            return segments
+        
+        for i in range(len(route_points) - 1):
+            current_point = route_points[i]
+            next_point = route_points[i + 1]
+            
+            # Only invert Y coordinate
+            curr_x = gate_x + self.dbu(current_point['x'])  # Keep X as is
+            curr_y = gate_y - self.dbu(current_point['y'])  # Invert Y
+            next_x = gate_x + self.dbu(next_point['x'])     # Keep X as is
+            next_y = gate_y - self.dbu(next_point['y'])     # Invert Y
+            
+            # Rest of the code remains the same...
+            dx = abs(next_x - curr_x)
+            dy = abs(next_y - curr_y)
+            
+            if dx > 1 and dy < 1:  # Horizontal
+                box = db.Box(
+                    min(curr_x, next_x) - m3_width//2,
+                    curr_y - m3_width//2,
+                    max(curr_x, next_x) + m3_width//2,
+                    curr_y + m3_width//2
+                )
+                array_cell.shapes(self.layers['Metal3']).insert(box)
+                
+            elif dy > 1 and dx < 1:  # Vertical
+                box = db.Box(
+                    curr_x - m3_width//2,
+                    min(curr_y, next_y) - m3_width//2,
+                    curr_x + m3_width//2,
+                    max(curr_y, next_y) + m3_width//2
+                )
+                array_cell.shapes(self.layers['Metal3']).insert(box)
+            
+            elif dx > 1 and dy > 1:
+                # L-shape
+                h_box = db.Box(
+                    min(curr_x, next_x) - m3_width//2,
+                    curr_y - m3_width//2,
+                    max(curr_x, next_x) + m3_width//2,
+                    curr_y + m3_width//2
+                )
+                array_cell.shapes(self.layers['Metal3']).insert(h_box)
+                
+                v_box = db.Box(
+                    next_x - m3_width//2,
+                    min(curr_y, next_y) - m3_width//2,
+                    next_x + m3_width//2,
+                    max(curr_y, next_y) + m3_width//2
+                )
+                array_cell.shapes(self.layers['Metal3']).insert(v_box)
+        
+        return segments
     
-    def route_gate_connections(self, array_cell, transistor_info, transistor_type):
-        """Route gate connections with pattern from GUI - FIXED VERSION"""
-        print(f"\nRouting gate connections for {transistor_type}...")
+    def create_legacy_route(self, array_cell, gate_x, gate_y, pattern, active_col, m3_width):
+        """Create route from legacy pattern format (backward compatibility)"""
+        segments = []
         
-        # Load pattern data
-        pattern_data = load_pattern_data()
+        # Apply pattern WITHOUT direction logic
+        offset_y_dbu = self.dbu(pattern.get('offset_y', 0))
+        h_length_dbu = self.dbu(pattern.get('h_length', 0))
+        v_length_dbu = self.dbu(pattern.get('v_length', 0))
         
-        # Verify pattern
-        print(f"✓ Loaded pattern with {len(pattern_data)} entries")
+        start_x = gate_x
+        start_y = gate_y + offset_y_dbu
+        
+        # NO AUTOMATIC DIRECTION - respect pattern exactly
+        # NO MIRROR EFFECT - all columns use same pattern
+        end_x = start_x + h_length_dbu
+        
+        # Horizontal segment
+        if h_length_dbu > 0:
+            h_box = db.Box(
+                min(start_x, end_x) - m3_width//2, start_y - m3_width//2,
+                max(start_x, end_x) + m3_width//2, start_y + m3_width//2
+            )
+            array_cell.shapes(self.layers['Metal3']).insert(h_box)
+            segments.append({'type': 'H', 'start': (start_x, start_y), 'end': (end_x, start_y)})
+        
+        # Vertical segment - respect pattern direction
+        if pattern.get('goes_up', False):
+            exit_y = start_y + v_length_dbu
+        else:
+            exit_y = start_y - v_length_dbu
+        
+        v_box = db.Box(
+            end_x - m3_width//2, min(start_y, exit_y),
+            end_x + m3_width//2, max(start_y, exit_y)
+        )
+        array_cell.shapes(self.layers['Metal3']).insert(v_box)
+        segments.append({'type': 'V', 'start': (end_x, start_y), 'end': (end_x, exit_y)})
+        
+        return segments
+
+
+    def route_gate_connections(self, array_cell, transistor_info):
+        """Route gate connections - wrapper for enhanced version"""
+        # Usar la versión enhanced si existe
+        if hasattr(self, 'route_gate_connections_enhanced'):
+            return self.route_gate_connections_enhanced(array_cell, transistor_info)
+        else:
+            print("WARNING: No enhanced routing method found, skipping gate routing")
+            return None
+
+    def route_gate_connections_enhanced(self, array_cell, transistor_info, geom=None):
+        """
+        Route gates: Via at CENTER -> M3 extension LEFT of transistor bbox
+        Extended BOTH up and down to reach guard ring edges + 1.5µm
+        """
+        print(f"\nRouting gate connections (extended to guard ring edges)...")
         
         m3_width = self.dbu(METAL3_WIDTH)
         
-        active_transistors = [t for t in transistor_info if not t['is_dummy']]
-        print(f"✓ Found {len(active_transistors)} active transistors to route")
+        # Get transistor bbox for proper spacing
+        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
+        terminal_info = self.analyze_transistor_terminals(transistor_cell)
         
-        routed_count = 0
+        # Vertical bus position: LEFT of transistor bbox with clearance
+        clearance = self.dbu(0.5)  # 500nm clearance from transistor edge
+        bus_x_offset = (terminal_info['bbox_left'] - terminal_info['transistor_center']) - clearance
         
-        for t in active_transistors:
-            row = t['active_row']
-            col = t['active_col']
+        print(f"  Transistor width: {terminal_info['bbox_width']*self.layout.dbu:.3f}µm")
+        print(f"  Vertical bus offset: {bus_x_offset*self.layout.dbu:.3f}µm from center")
+        
+        # Group transistors by column
+        columns = {}
+        for t in transistor_info:
+            if not t['is_dummy']:
+                col = t['active_col']
+                if col not in columns:
+                    columns[col] = []
+                columns[col].append(t)
+        
+        for col in columns:
+            columns[col].sort(key=lambda t: t['active_row'])
+        
+        # Find actual array boundaries from transistor positions
+        all_transistors = transistor_info
+        if all_transistors:
+            # Find min and max Y from ALL transistors (including dummies)
+            min_y_transistor = min(t['y'] for t in all_transistors)
+            max_y_transistor = max(t['y'] for t in all_transistors)
             
-            pattern_key = (row, col)
-            if pattern_key not in pattern_data:
-                print(f"⚠ No pattern found for transistor [{row},{col}]")
+            # Guard ring edges are beyond the transistor edges
+            # Bottom guard ring is below the bottommost transistor
+            bottom_guard_edge = min_y_transistor - terminal_info['bbox_height']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
+            
+            # Top guard ring is above the topmost transistor
+            top_guard_edge = max_y_transistor + terminal_info['bbox_height']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+        else:
+            # Fallback calculation
+            bottom_guard_edge = -self.dbu(5)
+            top_guard_edge = self.dbu(20)
+        
+        # Extension beyond guard ring
+        extension_beyond = self.dbu(1.5)  # 1.5µm beyond guard ring edge
+        
+        print(f"  Transistor Y range: {min_y_transistor*self.layout.dbu:.3f} to {max_y_transistor*self.layout.dbu:.3f}µm")
+        print(f"  Guard ring edges: bottom={bottom_guard_edge*self.layout.dbu:.3f}µm, top={top_guard_edge*self.layout.dbu:.3f}µm")
+        print(f"  Extension: {extension_beyond*self.layout.dbu:.3f}µm beyond guard ring")
+        
+        routes_created = 0
+        
+        for col in sorted(columns.keys()):
+            col_transistors = columns[col]
+            
+            if len(col_transistors) < 1:
                 continue
             
-            pattern = pattern_data[pattern_key]
+            print(f"  Column {col}: Connecting {len(col_transistors)} gates")
             
-            # Gate position (center of transistor)
-            gate_x = t['x']
-            gate_y = t['y']
+            # Vertical bus X position (same for all in column)
+            route_x = col_transistors[0]['x'] + bus_x_offset
             
-            # Create via stack at gate
-            self.create_gate_via_stack(array_cell, gate_x, gate_y)
-            
-            # Start position (offset from gate center)
-            offset_y_dbu = self.dbu(pattern['offset_y'])
-            start_x = gate_x
-            start_y = gate_y + offset_y_dbu
-            
-            # Connect point (where horizontal meets vertical)
-            connect_y = start_y
-            
-            # Horizontal segment length
-            h_length_dbu = self.dbu(pattern['h_length'])
-            
-            # Determine horizontal direction based on column position
-            if col >= ARRAY_SIZE//2:
-                # Right half goes right
-                b_end_x = start_x + h_length_dbu
-            else:
-                # Left half goes left
-                b_end_x = start_x - h_length_dbu
-            
-            # Draw horizontal segment if it has length
-            if h_length_dbu > 0:
+            # Create via stacks and horizontal connections for each transistor
+            for t in col_transistors:
+                gate_x = t['x']  # Gate center
+                gate_y = t['y']  # Gate center
+                
+                # Via stack at gate CENTER
+                self.create_gate_via_stack(array_cell, gate_x, gate_y)
+                
+                # Horizontal M3 from gate center to vertical bus
                 h_box = db.Box(
-                    min(start_x, b_end_x) - m3_width//2, start_y - m3_width//2,
-                    max(start_x, b_end_x) + m3_width//2, start_y + m3_width//2
+                    min(route_x, gate_x) - m3_width//2,
+                    gate_y - m3_width//2,
+                    max(route_x, gate_x) + m3_width//2,
+                    gate_y + m3_width//2
                 )
                 array_cell.shapes(self.layers['Metal3']).insert(h_box)
             
-            # FIXED: Use v_length from pattern instead of calculating exit based on array bounds
-            v_length_dbu = self.dbu(pattern['v_length'])
+            # Connect transistors with vertical segments
+            for i in range(len(col_transistors) - 1):
+                curr_t = col_transistors[i]
+                next_t = col_transistors[i + 1]
+                
+                v_box = db.Box(
+                    route_x - m3_width//2,
+                    min(curr_t['y'], next_t['y']) - m3_width//2,
+                    route_x + m3_width//2,
+                    max(curr_t['y'], next_t['y']) + m3_width//2
+                )
+                array_cell.shapes(self.layers['Metal3']).insert(v_box)
             
-            if pattern['goes_up']:
-                exit_y = connect_y + v_length_dbu  # Go up from connection point
-                direction = 'UP'
-            else:
-                exit_y = connect_y - v_length_dbu  # Go down from connection point
-                direction = 'DOWN'
+            # EXTEND DOWNWARD from first (topmost in array) transistor to bottom guard ring - 1.5µm
+            first_t = col_transistors[0]  # Topmost active transistor
+            bottom_extension_y = bottom_guard_edge - extension_beyond
             
-            # Draw vertical segment
-            v_box = db.Box(
-                b_end_x - m3_width // 2, min(connect_y, exit_y),
-                b_end_x + m3_width // 2, max(connect_y, exit_y)
+            bottom_ext_box = db.Box(
+                route_x - m3_width//2,
+                bottom_extension_y - m3_width//2,
+                route_x + m3_width//2,
+                first_t['y'] + m3_width//2
             )
-            array_cell.shapes(self.layers['Metal3']).insert(v_box)
+            array_cell.shapes(self.layers['Metal3']).insert(bottom_ext_box)
             
-            # Add label at exit point
-            label = f"G{row}_{col}"
-            label_y_offset = self.dbu(0.5)
-            label_y = exit_y + label_y_offset if pattern['goes_up'] else exit_y - label_y_offset
+            # EXTEND UPWARD from last (bottommost in array) transistor to top guard ring + 1.5µm
+            last_t = col_transistors[-1]  # Bottommost active transistor
+            top_extension_y = top_guard_edge + extension_beyond
             
-            self.add_text(array_cell, b_end_x, label_y, label)
-            self.debug_info['gate_routes'].append(label)
+            top_ext_box = db.Box(
+                route_x - m3_width//2,
+                last_t['y'] - m3_width//2,
+                route_x + m3_width//2,
+                top_extension_y + m3_width//2
+            )
+            array_cell.shapes(self.layers['Metal3']).insert(top_ext_box)
             
-            # Debug info
-            print(f"  T[{row},{col}]: offset_y={pattern['offset_y']:.2f}, "
-                f"h_len={pattern['h_length']:.2f}, v_len={pattern['v_length']:.2f}, "
-                f"exit_y={exit_y * self.layout.dbu:.2f}µm, dir={direction}")
+            # Add label at the top extended end
+            self.add_text(array_cell, route_x, top_extension_y, f"G_COL{col}")
+            routes_created += 1
             
-            # Verification info
-            self.debug_info['pattern_verification'].append({
-                'transistor': f"[{row},{col}]",
-                'pattern': pattern,
-                'gate_pos': (gate_x * self.layout.dbu, gate_y * self.layout.dbu),
-                'route_start': (start_x * self.layout.dbu, start_y * self.layout.dbu),
-                'exit_point': (b_end_x * self.layout.dbu, exit_y * self.layout.dbu)
-            })
-            
-            routed_count += 1
+            print(f"    Column {col}: Extended from Y={bottom_extension_y*self.layout.dbu:.3f} to Y={top_extension_y*self.layout.dbu:.3f}µm")
         
-        print(f"✓ Routed {routed_count} gates successfully")
+        print(f"  Created {routes_created} column routes extended to guard ring edges + 1.5µm")
+        return routes_created
+
+    def route_drain_source_connections(self, array_cell, transistor_info):
+        """
+        Route drains and sources with proper vertical extension and via stacks
+        Modified to pass transistor_info to routing functions
+        """
+        print(f"\nRouting drain and source connections...")
+        print(f"  Strategy: M1 vertical extension -> Via stacks -> Row connections")
         
-        # Print verification summary
-        if len(self.debug_info['pattern_verification']) <= 10:
-            print("\nPattern verification:")
-            for v in self.debug_info['pattern_verification'][:5]:
-                print(f"  {v['transistor']}: offset_y={v['pattern']['offset_y']:.2f}, "
-                    f"h_len={v['pattern']['h_length']:.2f}, "
-                    f"v_len={v['pattern']['v_length']:.2f}, "
-                    f"exit_y={v['exit_point'][1]:.2f}µm")
-    
-    def create_gate_via_stack(self, cell, x, y):
-        """Create via stack from Poly to Metal3 at gate position"""
-        cont_size = self.dbu(CONT_SIZE)
-        via1_size = self.dbu(VIA1_SIZE)
-        via2_size = self.dbu(VIA2_SIZE)
+        # Store transistor info in array_cell for access by routing functions
+        array_cell.parent_transistor_info = transistor_info
         
-        # Contact (Poly to M1)
-        cont_box = db.Box(
-            x - cont_size//2, y - cont_size//2,
-            x + cont_size//2, y + cont_size//2
-        )
-        cell.shapes(self.layers['Cont']).insert(cont_box)
+        # Group transistors by row
+        rows = {}
+        for t in transistor_info:
+            if not t['is_dummy']:
+                row = t['active_row']
+                if row not in rows:
+                    rows[row] = []
+                rows[row].append(t)
         
-        # M1 pad
-        m1_pad = cont_box.enlarged(self.dbu(0.05))
-        cell.shapes(self.layers['Metal1']).insert(m1_pad)
+        # Sort each row by column
+        for row in rows:
+            rows[row].sort(key=lambda t: t['active_col'])
+        
+        # Process each row
+        for row in sorted(rows.keys()):
+            row_transistors = rows[row]
+            
+            if len(row_transistors) < 1:
+                continue
+            
+            print(f"  Row {row}: Processing {len(row_transistors)} transistors")
+            
+            # Route drains with M4 (extending both left and right)
+            self.route_row_drains_m4(array_cell, row_transistors, row)
+            
+            # Route sources with M5 (extending both left and right)
+            self.route_row_sources_m5(array_cell, row_transistors, row)
+        
+        print(f"  ✓ Completed drain/source routing for {len(rows)} rows")
+
+    def route_row_drains_m4(self, array_cell, row_transistors, row):
+        """
+        Route drains: M1 extension from CENTER upward to 1µm OUTSIDE transistor
+        Extended horizontally to BOTH left and right guard ring edges + 1.5µm
+        FIXED: Corrected row numbering (KLayout row 0 = bottom = GUI row N-1)
+        """
+        
+        m1_width = self.dbu(METAL1_WIDTH)
+        m4_width = self.dbu(0.4)
+        
+        # Get terminal positions and bbox
+        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
+        terminal_info = self.analyze_transistor_terminals(transistor_cell)
+        
+        # Drain X position (left edge of drain M1)
+        drain_x_offset = terminal_info['drain_left_edge'] - terminal_info['transistor_center']
+        
+        # Extension parameters: from CENTER to 1µm OUTSIDE top edge
+        bbox_half_height = terminal_info['bbox_height'] / 2
+        extension_beyond = self.dbu(1)  # 1µm beyond transistor boundary
+        
+        # FIXED: Correct row number for labeling
+        actual_row_number = (ARRAY_SIZE - 1) - row
+        
+        print(f"    KLayout row {row} (GUI row {actual_row_number}): routing drains")
+        
+        drain_m4_points = []
+        
+        # Create M1 extensions and via stacks for each transistor
+        for i, t in enumerate(row_transistors):
+            # Drain X position
+            drain_x = t['x'] + drain_x_offset
+            
+            # Extension Y positions
+            ext_start_y = t['y']  # Start from transistor CENTER
+            ext_end_y = t['y'] + bbox_half_height + extension_beyond  # End 1µm above top edge
+            
+            # M1 vertical extension
+            m1_extension = db.Box(
+                drain_x - m1_width//2,
+                ext_start_y - m1_width//2,
+                drain_x + m1_width//2,
+                ext_end_y + m1_width//2
+            )
+            array_cell.shapes(self.layers['Metal1']).insert(m1_extension)
+            
+            # Via stack at end of extension
+            via_x = drain_x
+            via_y = ext_end_y
+            
+            # Create full via stack M1->M4
+            self.create_via_stack_m1_to_m4(array_cell, via_x, via_y)
+            
+            drain_m4_points.append((via_x, via_y))
+        
+        # Find actual array boundaries from all transistors in this row
+        # Get all transistors (including dummies) to find edges
+        all_row_transistors = [t for t in array_cell.parent_transistor_info 
+                            if t['row'] == row] if hasattr(array_cell, 'parent_transistor_info') else row_transistors
+        
+        # If we don't have parent info, estimate from current transistors
+        if not hasattr(array_cell, 'parent_transistor_info'):
+            # Find min and max X from transistors
+            min_x_transistor = min(t['x'] for t in row_transistors)
+            max_x_transistor = max(t['x'] for t in row_transistors)
+            
+            # Estimate guard ring positions
+            left_guard_edge = min_x_transistor - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
+            right_guard_edge = max_x_transistor + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+        else:
+            # Use actual positions
+            all_x = [t['x'] for t in all_row_transistors]
+            left_guard_edge = min(all_x) - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
+            right_guard_edge = max(all_x) + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+        
+        # Extension beyond guard rings
+        ext_length = self.dbu(1.5)  # 1.5µm beyond guard ring
+        left_extension_x = left_guard_edge - ext_length
+        right_extension_x = right_guard_edge + ext_length
+        
+        # Create full horizontal M4 bus from LEFT to RIGHT guard ring edges
+        if drain_m4_points:
+            m4_y = drain_m4_points[0][1]  # All at same Y
+            
+            # Full horizontal M4 bus extending BOTH directions
+            m4_horizontal = db.Box(
+                left_extension_x - m4_width//2,
+                m4_y - m4_width//2,
+                right_extension_x + m4_width//2,
+                m4_y + m4_width//2
+            )
+            array_cell.shapes(self.layers['Metal4']).insert(m4_horizontal)
+            
+            # Add label at left extension
+            self.add_text(array_cell, left_extension_x, m4_y, f"D_R{actual_row_number}")
+            
+            print(f"    Extended M4 drain bus from X={left_extension_x*self.layout.dbu:.3f}µm to X={right_extension_x*self.layout.dbu:.3f}µm")
+
+
+    def route_row_sources_m5(self, array_cell, row_transistors, row):
+        """
+        Route sources: M1 extension from CENTER downward to 1µm OUTSIDE transistor
+        Extended horizontally to BOTH left and right guard ring edges + 1.5µm
+        FIXED: Corrected row numbering and ensured M5 layer creation
+        """
+        
+        m1_width = self.dbu(METAL1_WIDTH)
+        m5_width = self.dbu(0.4)
+        
+        # Get terminal positions and bbox
+        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
+        terminal_info = self.analyze_transistor_terminals(transistor_cell)
+        
+        # Source X position (right edge of source M1)
+        source_x_offset = terminal_info['source_right_edge'] - terminal_info['transistor_center']
+        
+        # Extension parameters: from CENTER to 1µm OUTSIDE bottom edge
+        bbox_half_height = terminal_info['bbox_height'] / 2
+        extension_beyond = self.dbu(1)  # 1µm beyond transistor boundary
+        
+        # FIXED: Correct row number for labeling
+        actual_row_number = (ARRAY_SIZE - 1) - row
+        
+        print(f"    KLayout row {row} (GUI row {actual_row_number}): routing sources")
+        
+        source_m5_points = []
+        
+        # Create M1 extensions and via stacks for each transistor
+        for i, t in enumerate(row_transistors):
+            # Source X position
+            source_x = t['x'] + source_x_offset
+            
+            # Extension Y positions
+            ext_start_y = t['y']  # Start from transistor CENTER
+            ext_end_y = t['y'] - bbox_half_height - extension_beyond  # End 1µm below bottom edge
+            
+            # M1 vertical extension
+            m1_extension = db.Box(
+                source_x - m1_width//2,
+                ext_end_y - m1_width//2,
+                source_x + m1_width//2,
+                ext_start_y + m1_width//2
+            )
+            array_cell.shapes(self.layers['Metal1']).insert(m1_extension)
+            
+            # Via stack at end of extension
+            via_x = source_x
+            via_y = ext_end_y
+            
+            # Create full via stack M1->M5 with explicit M5 pad
+            # Via1 (M1 to M2)
+            via1_size = self.dbu(VIA1_SIZE)
+            via1_box = db.Box(
+                via_x - via1_size//2, via_y - via1_size//2,
+                via_x + via1_size//2, via_y + via1_size//2
+            )
+            array_cell.shapes(self.layers['Via1']).insert(via1_box)
+            
+            # M2 pad
+            m2_size = self.dbu(METAL2_WIDTH)
+            m2_pad = db.Box(
+                via_x - m2_size//2, via_y - m2_size//2,
+                via_x + m2_size//2, via_y + m2_size//2
+            )
+            array_cell.shapes(self.layers['Metal2']).insert(m2_pad)
+            
+            # Via2 (M2 to M3)
+            via2_size = self.dbu(VIA2_SIZE)
+            via2_box = db.Box(
+                via_x - via2_size//2, via_y - via2_size//2,
+                via_x + via2_size//2, via_y + via2_size//2
+            )
+            array_cell.shapes(self.layers['Via2']).insert(via2_box)
+            
+            # M3 pad
+            m3_size = self.dbu(METAL3_WIDTH)
+            m3_pad = db.Box(
+                via_x - m3_size//2, via_y - m3_size//2,
+                via_x + m3_size//2, via_y + m3_size//2
+            )
+            array_cell.shapes(self.layers['Metal3']).insert(m3_pad)
+            
+            # Via3 (M3 to M4)
+            via3_size = self.dbu(0.26)
+            via3_box = db.Box(
+                via_x - via3_size//2, via_y - via3_size//2,
+                via_x + via3_size//2, via_y + via3_size//2
+            )
+            array_cell.shapes(self.layers['Via3']).insert(via3_box)
+            
+            # M4 pad
+            m4_size = self.dbu(0.4)
+            m4_pad = db.Box(
+                via_x - m4_size//2, via_y - m4_size//2,
+                via_x + m4_size//2, via_y + m4_size//2
+            )
+            array_cell.shapes(self.layers['Metal4']).insert(m4_pad)
+            
+            # Via4 (M4 to M5)
+            via4_size = self.dbu(0.26)
+            via4_box = db.Box(
+                via_x - via4_size//2, via_y - via4_size//2,
+                via_x + via4_size//2, via_y + via4_size//2
+            )
+            array_cell.shapes(self.layers['Via4']).insert(via4_box)
+            
+            # M5 pad at via location
+            m5_pad = db.Box(
+                via_x - m5_width//2, via_y - m5_width//2,
+                via_x + m5_width//2, via_y + m5_width//2
+            )
+            array_cell.shapes(self.layers['Metal5']).insert(m5_pad)
+            
+            source_m5_points.append((via_x, via_y))
+            
+        # Debug: Print via points
+        print(f"      Created {len(source_m5_points)} M5 via points")
+        if source_m5_points:
+            print(f"      Via Y position: {source_m5_points[0][1]*self.layout.dbu:.3f}µm")
+        
+        # Find actual array boundaries
+        # Get the dummy mode to calculate proper boundaries
+        dummy_mode = self.metadata.get('dummy_mode', 'sides') if hasattr(self, 'metadata') else 'full'
+        
+        # Calculate number of columns including dummies
+        if dummy_mode == 'full':
+            total_cols = ARRAY_SIZE + 2  # Add left and right dummy columns
+        elif dummy_mode == 'sides':
+            total_cols = ARRAY_SIZE + 2  # Add left and right dummy columns
+        else:
+            total_cols = ARRAY_SIZE
+        
+        # Calculate pitch from actual transistor positions if possible
+        if len(row_transistors) >= 2:
+            pitch_x = abs(row_transistors[1]['x'] - row_transistors[0]['x'])
+        else:
+            pitch_x = self.dbu(self.pitch_x) if hasattr(self, 'pitch_x') else self.dbu(3.13)
+        
+        # Calculate guard ring edges based on array structure
+        # Left edge is at x=0 (leftmost guard ring)
+        left_guard_edge = 0
+        
+        # Right edge is at the rightmost guard ring position
+        right_guard_edge = (total_cols - 1) * pitch_x + self.dbu(GUARDRING_WIDTH)
+        
+        # Extension beyond guard rings
+        ext_length = self.dbu(1.5)  # 1.5µm beyond guard ring
+        left_extension_x = left_guard_edge - ext_length
+        right_extension_x = right_guard_edge + ext_length
+        
+        # Create full horizontal M5 bus from LEFT to RIGHT guard ring edges
+        if source_m5_points:
+            m5_y = source_m5_points[0][1]  # All source vias are at same Y
+            
+            print(f"      Creating M5 horizontal bus:")
+            print(f"        From X={left_extension_x*self.layout.dbu:.3f}µm to X={right_extension_x*self.layout.dbu:.3f}µm")
+            print(f"        At Y={m5_y*self.layout.dbu:.3f}µm")
+            
+            # Create the horizontal M5 bus
+            m5_horizontal = db.Box(
+                left_extension_x,  # Left X (without width adjustment)
+                m5_y - m5_width//2,  # Bottom Y
+                right_extension_x,  # Right X (without width adjustment)
+                m5_y + m5_width//2   # Top Y
+            )
+            array_cell.shapes(self.layers['Metal5']).insert(m5_horizontal)
+            
+            # Also connect between source points explicitly to ensure continuity
+            if len(source_m5_points) > 1:
+                min_source_x = min(p[0] for p in source_m5_points)
+                max_source_x = max(p[0] for p in source_m5_points)
+                
+                # Additional segment to ensure all sources are connected
+                m5_connect = db.Box(
+                    min_source_x - m5_width//2,
+                    m5_y - m5_width//2,
+                    max_source_x + m5_width//2,
+                    m5_y + m5_width//2
+                )
+                array_cell.shapes(self.layers['Metal5']).insert(m5_connect)
+            
+            # Add label at right extension
+            self.add_text(array_cell, right_extension_x, m5_y, f"S_R{actual_row_number}")
+            
+            print(f"    Extended M5 source bus from X={left_extension_x*self.layout.dbu:.3f}µm to X={right_extension_x*self.layout.dbu:.3f}µm")
+
+
+    def create_via_stack_m1_to_m4(self, cell, x, y):
+        """Create complete via stack from M1 to M4"""
         
         # Via1 (M1 to M2)
+        via1_size = self.dbu(VIA1_SIZE)
         via1_box = db.Box(
             x - via1_size//2, y - via1_size//2,
             x + via1_size//2, y + via1_size//2
@@ -500,140 +1314,205 @@ class MismatchArray4x4:
         cell.shapes(self.layers['Via1']).insert(via1_box)
         
         # M2 pad
+        m2_size = self.dbu(METAL2_WIDTH)
+        m2_pad = db.Box(
+            x - m2_size//2, y - m2_size//2,
+            x + m2_size//2, y + m2_size//2
+        )
+        cell.shapes(self.layers['Metal2']).insert(m2_pad)
+        
+        # Via2 (M2 to M3)
+        via2_size = self.dbu(VIA2_SIZE)
+        via2_box = db.Box(
+            x - via2_size//2, y - via2_size//2,
+            x + via2_size//2, y + via2_size//2
+        )
+        cell.shapes(self.layers['Via2']).insert(via2_box)
+        
+        # M3 pad
+        m3_size = self.dbu(METAL3_WIDTH)
+        m3_pad = db.Box(
+            x - m3_size//2, y - m3_size//2,
+            x + m3_size//2, y + m3_size//2
+        )
+        cell.shapes(self.layers['Metal3']).insert(m3_pad)
+        
+        # Via3 (M3 to M4)
+        via3_size = self.dbu(0.26)
+        via3_box = db.Box(
+            x - via3_size//2, y - via3_size//2,
+            x + via3_size//2, y + via3_size//2
+        )
+        cell.shapes(self.layers['Via3']).insert(via3_box)
+        
+        # M4 pad
+        m4_size = self.dbu(0.4)
+        m4_pad = db.Box(
+            x - m4_size//2, y - m4_size//2,
+            x + m4_size//2, y + m4_size//2
+        )
+        cell.shapes(self.layers['Metal4']).insert(m4_pad)
+
+    def create_via_stack_m1_to_m5(self, cell, x, y):
+        """Create complete via stack from M1 to M5"""
+        
+        # First create stack to M4
+        self.create_via_stack_m1_to_m4(cell, x, y)
+        
+        # Via4 (M4 to M5)
+        via4_size = self.dbu(0.26)
+        via4_box = db.Box(
+            x - via4_size//2, y - via4_size//2,
+            x + via4_size//2, y + via4_size//2
+        )
+        cell.shapes(self.layers['Via4']).insert(via4_box)
+        
+        # M5 pad
+        m5_size = self.dbu(0.4)
+        m5_pad = db.Box(
+            x - m5_size//2, y - m5_size//2,
+            x + m5_size//2, y + m5_size//2
+        )
+        cell.shapes(self.layers['Metal5']).insert(m5_pad)
+
+    def create_via_stack_to_m4(self, cell, x, y):
+        """Create via stack from M1 to M4"""
+        via_size = self.dbu(0.26)
+        
+        # Via1 (M1 to M2)
+        via1_box = db.Box(x - via_size//2, y - via_size//2,
+                        x + via_size//2, y + via_size//2)
+        cell.shapes(self.layers['Via1']).insert(via1_box)
+        
+        # M2 pad
         m2_pad = via1_box.enlarged(self.dbu(0.05))
         cell.shapes(self.layers['Metal2']).insert(m2_pad)
         
         # Via2 (M2 to M3)
+        via2_box = db.Box(x - via_size//2, y - via_size//2,
+                        x + via_size//2, y + via_size//2)
+        cell.shapes(self.layers['Via2']).insert(via2_box)
+        
+        # M3 pad
+        m3_pad = via2_box.enlarged(self.dbu(0.05))
+        cell.shapes(self.layers['Metal3']).insert(m3_pad)
+        
+        # Via3 (M3 to M4)
+        via3_box = db.Box(x - via_size//2, y - via_size//2,
+                        x + via_size//2, y + via_size//2)
+        cell.shapes(self.layers['Via3']).insert(via3_box)
+
+    def create_via_stack_to_m5(self, cell, x, y):
+        """Create via stack from M1 to M5"""
+        # First create stack to M4
+        self.create_via_stack_to_m4(cell, x, y)
+        
+        via_size = self.dbu(0.26)
+        
+        # M4 pad
+        m4_pad = db.Box(x - via_size//2 - self.dbu(0.05),
+                        y - via_size//2 - self.dbu(0.05),
+                        x + via_size//2 + self.dbu(0.05),
+                        y + via_size//2 + self.dbu(0.05))
+        cell.shapes(self.layers['Metal4']).insert(m4_pad)
+        
+        # Via4 (M4 to M5)
+        via4_box = db.Box(x - via_size//2, y - via_size//2,
+                        x + via_size//2, y + via_size//2)
+        cell.shapes(self.layers['Via4']).insert(via4_box)
+
+    def create_gate_via_stack(self, cell, x, y):
+        """Create via stack from Poly to Metal3"""
+        cont_size = self.dbu(CONT_SIZE)
+        via1_size = self.dbu(VIA1_SIZE)
+        via2_size = self.dbu(VIA2_SIZE)
+        
+        # Contact
+        cont_box = db.Box(
+            x - cont_size//2, y - cont_size//2,
+            x + cont_size//2, y + cont_size//2
+        )
+        cell.shapes(self.layers['Cont']).insert(cont_box)
+        
+        # M1
+        m1_pad = cont_box.enlarged(self.dbu(0.05))
+        cell.shapes(self.layers['Metal1']).insert(m1_pad)
+        
+        # Via1
+        via1_box = db.Box(
+            x - via1_size//2, y - via1_size//2,
+            x + via1_size//2, y + via1_size//2
+        )
+        cell.shapes(self.layers['Via1']).insert(via1_box)
+        
+        # M2
+        m2_pad = via1_box.enlarged(self.dbu(0.05))
+        cell.shapes(self.layers['Metal2']).insert(m2_pad)
+        
+        # Via2
         via2_box = db.Box(
             x - via2_size//2, y - via2_size//2,
             x + via2_size//2, y + via2_size//2
         )
         cell.shapes(self.layers['Via2']).insert(via2_box)
     
-    def route_shared_connections(self, array_cell, transistor_info, transistor_type, geom):
-        """Route shared S, D, B connections using M1 and M2"""
-        print(f"\nRouting shared connections for {transistor_type}...")
-        
-        bus_width = self.dbu(METAL1_WIDTH * 4)
-        bus_width_m2 = self.dbu(METAL2_WIDTH * 4)
-        
-        array_bbox = array_cell.bbox()
-        
-        # Source bus (left side vertical) - Metal1
-        source_x = array_bbox.left - self.dbu(5)
-        source_bus = db.Box(
-            source_x - bus_width//2, array_bbox.bottom,
-            source_x + bus_width//2, array_bbox.top
-        )
-        array_cell.shapes(self.layers['Metal1']).insert(source_bus)
-        self.add_text(array_cell, source_x - self.dbu(3), array_bbox.center().y, 
-                      f"{transistor_type.upper()}_SOURCE")
-        
-        # Drain bus (right side vertical) - Metal2 
-        drain_x = array_bbox.right + self.dbu(5)
-        drain_bus = db.Box(
-            drain_x - bus_width_m2//2, array_bbox.bottom,
-            drain_x + bus_width_m2//2, array_bbox.top
-        )
-        array_cell.shapes(self.layers['Metal2']).insert(drain_bus)
-        self.add_text(array_cell, drain_x + self.dbu(3), array_bbox.center().y,
-                      f"{transistor_type.upper()}_DRAIN")
-        
-        # Bulk bus (bottom horizontal) - Metal1
-        bulk_y = array_bbox.bottom - self.dbu(10)
-        bulk_bus = db.Box(
-            array_bbox.left, bulk_y - bus_width//2,
-            array_bbox.right, bulk_y + bus_width//2
-        )
-        array_cell.shapes(self.layers['Metal1']).insert(bulk_bus)
-        
-        bulk_label = f"{transistor_type.upper()}_BULK"
-        if transistor_type == 'nmos':
-            bulk_label += " (substrate/VSS)"
-        else:
-            bulk_label += " (N-well/VDD)"
-        self.add_text(array_cell, array_bbox.center().x, bulk_y - self.dbu(3), bulk_label)
-        
-        print("✓ Added shared connection buses (S=M1, D=M2, B=M1)")
-    
     def add_text(self, cell, x, y, text):
         """Add text label"""
         text_obj = db.Text(text, db.Trans(db.Point(x, y)))
         cell.shapes(self.layers['TEXT']).insert(text_obj)
     
-    def add_measurement_pads(self):
-        """Add measurement pads"""
-        print("\nAdding measurement pads...")
-        
-        pad_size = self.dbu(PAD_SIZE)
-        pad_spacing = self.dbu(60)
-        
-        bbox = self.top_cell.bbox()
-        pad_y = bbox.top + self.dbu(50)
-        
-        pads = [
-            ('VDD', 'Power supply'),
-            ('VSS', 'Ground'),
-            ('NMOS_S_D_B', 'NMOS shared'),
-            ('PMOS_S_D_B', 'PMOS shared'),
-            ('GATE_BUS', 'Gate test bus')
-        ]
-        
-        start_x = bbox.center().x - (len(pads) * pad_spacing) // 2
-        
-        for i, (label, desc) in enumerate(pads):
-            x = start_x + i * pad_spacing
-            
-            pad_box = db.Box(
-                x - pad_size//2, pad_y - pad_size//2,
-                x + pad_size//2, pad_y + pad_size//2
-            )
-            self.top_cell.shapes(self.layers['Metal2']).insert(pad_box)
-            
-            self.add_text(self.top_cell, x, pad_y, label)
-            self.add_text(self.top_cell, x, pad_y - pad_size//2 - self.dbu(2), desc)
-        
-        print(f"✓ Added {len(pads)} measurement pads")
-    
-    def generate_complete_structure(self, output_file):
-        """Generate complete mismatch test structure"""
+    def generate_structure(self, output_file):
+        """Generate complete structure with NMOS and/or PMOS - FIXED VERSION"""
         print("\n" + "="*60)
-        print("GENERATING COMPLETE MISMATCH TEST STRUCTURE")
+        print("GENERATING MISMATCH TEST STRUCTURE")
         print("="*60)
         
-        # Print pattern info
-        pattern = load_pattern_data()
-        print(f"\nUsing pattern with {len(pattern)} transistor entries")
+        print(f"Device type requested: {self.device_type}")
         
-        # Create NMOS array
-        nmos_array, nmos_info, nmos_geom = self.create_array_with_shared_guardrings('nmos')
-        self.route_gate_connections(nmos_array, nmos_info, 'nmos')
-        self.route_shared_connections(nmos_array, nmos_info, 'nmos', nmos_geom)
+        if self.device_type == 'both':
+            # Create both NMOS and PMOS arrays
+            nmos_array, nmos_info, nmos_geom = self.create_nmos_array()
+            self.route_gate_connections(nmos_array, nmos_info)
+            
+            pmos_array, pmos_info, pmos_geom = self.create_pmos_array()
+            self.route_gate_connections(pmos_array, pmos_info)
+            
+            # Place side by side
+            nmos_trans = db.Trans(db.Point(0, 0))
+            self.top_cell.insert(db.CellInstArray(nmos_array.cell_index(), nmos_trans))
+            
+            separation = self.dbu(30)
+            pmos_x = nmos_array.bbox().width() + separation
+            pmos_trans = db.Trans(db.Point(pmos_x, 0))
+            self.top_cell.insert(db.CellInstArray(pmos_array.cell_index(), pmos_trans))
+            
+            print("✓ Generated both NMOS and PMOS arrays")
         
-        # Create PMOS array
-        pmos_array, pmos_info, pmos_geom = self.create_array_with_shared_guardrings('pmos')
-        self.route_gate_connections(pmos_array, pmos_info, 'pmos')
-        self.route_shared_connections(pmos_array, pmos_info, 'pmos', pmos_geom)
+        elif self.device_type == 'pmos':
+            # PMOS only
+            pmos_array, pmos_info, pmos_geom = self.create_pmos_array()
+            self.route_gate_connections(pmos_array, pmos_info)
+            pmos_trans = db.Trans(db.Point(0, 0))
+            self.top_cell.insert(db.CellInstArray(pmos_array.cell_index(), pmos_trans))
+            
+            print("✓ Generated PMOS array only")
         
-        # Place arrays in top cell
-        nmos_bbox = nmos_array.bbox()
-        pmos_bbox = pmos_array.bbox()
+        else:
+            # NMOS only (default)
+            nmos_array, nmos_info, nmos_geom = self.create_nmos_array()
+            self.route_gate_connections(nmos_array, nmos_info)
+            nmos_trans = db.Trans(db.Point(0, 0))
+            self.top_cell.insert(db.CellInstArray(nmos_array.cell_index(), nmos_trans))
+
+            self.route_drain_source_connections(nmos_array, nmos_info)
+            
+            print("✓ Generated NMOS array only")
         
-        # NMOS on left
-        nmos_trans = db.Trans(db.Point(0, 0))
-        self.top_cell.insert(db.CellInstArray(nmos_array.cell_index(), nmos_trans))
-        
-        # PMOS on right
-        separation = self.dbu(30)
-        pmos_x = nmos_bbox.width() + separation
-        pmos_trans = db.Trans(db.Point(pmos_x, 0))
-        self.top_cell.insert(db.CellInstArray(pmos_array.cell_index(), pmos_trans))
-        
-        # Add measurement pads
-        self.add_measurement_pads()
-        
-        # Add title and info
-        self.add_design_info()
+        # Add title
+        bbox = self.top_cell.bbox()
+        title_y = bbox.top + self.dbu(10)
+        title = f"{self.device_type.upper()} Mismatch Array {ARRAY_SIZE}x{ARRAY_SIZE} - W={TRANSISTOR_W}µm L={TRANSISTOR_L}µm"
+        self.add_text(self.top_cell, bbox.center().x, title_y, title)
         
         # Save
         print(f"\nSaving to: {output_file}")
@@ -642,26 +1521,21 @@ class MismatchArray4x4:
         # Final report
         self.print_final_report()
     
-    def add_design_info(self):
-        """Add design information text"""
-        bbox = self.top_cell.bbox()
-        
-        title_y = bbox.top + self.dbu(70)
-        title = f"Mismatch Test Array {ARRAY_SIZE}x{ARRAY_SIZE} - W={TRANSISTOR_W}µm L={TRANSISTOR_L}µm"
-        self.add_text(self.top_cell, bbox.center().x, title_y, title)
-        
-        info_y = title_y - self.dbu(3)
-        info = "Shared guardrings | S/D/B shared | Gates independent | Pattern from GUI"
-        self.add_text(self.top_cell, bbox.center().x, info_y, info)
-    
     def print_final_report(self):
-        """Print final summary report"""
+        """Print final summary"""
         bbox = self.top_cell.bbox()
         total_area = bbox.width() * bbox.height() / 1e6
         
         print("\n" + "="*60)
-        print("FINAL REPORT - STRUCTURE GENERATED SUCCESSFULLY")
+        print(f"FINAL REPORT - {self.device_type.upper()} STRUCTURE GENERATED")
         print("="*60)
+        print(f"\nConfiguration:")
+        print(f"  Device Type: {self.device_type}")
+        print(f"  Transistor W: {TRANSISTOR_W} µm")
+        print(f"  Transistor L: {TRANSISTOR_L} µm")
+        print(f"  Guardring spacing: {GUARDRING_SPACING} µm")
+        print(f"  Array: {ARRAY_SIZE}x{ARRAY_SIZE}")
+        
         print(f"\nDimensions:")
         print(f"  Total area: {total_area:.0f} µm²")
         print(f"  Chip size: {bbox.width()/1000:.1f} x {bbox.height()/1000:.1f} µm")
@@ -671,44 +1545,40 @@ class MismatchArray4x4:
         print(f"  Dummy: {self.debug_info['dummy_count']}")
         print(f"  Total: {self.debug_info['transistor_count'] + self.debug_info['dummy_count']}")
         
-        print(f"\nGate connections routed: {len(self.debug_info['gate_routes'])}")
-        if len(self.debug_info['gate_routes']) <= 20:
-            print(f"  Gates: {', '.join(self.debug_info['gate_routes'])}")
-        
-        print(f"\nKey features:")
+        print(f"\nFeatures:")
+        print(f"  ✓ Scalable dimensions (W, L configurable)")
+        print(f"  ✓ Configurable guardring spacing ({GUARDRING_SPACING}µm)")
         print(f"  ✓ Shared guardring borders")
-        print(f"  ✓ Non-overlapping gate routing (Metal3)")
-        print(f"  ✓ Pattern loaded from external source")
-        print(f"  ✓ Manhattan routing (H→V segments)")
-        print(f"  ✓ Dimensions matched to GUI")
-        print(f"  ✓ Upper half gates exit top")
-        print(f"  ✓ Lower half gates exit bottom")
-        print(f"  ✓ Dummies on sides only")
-        print(f"  ✓ M1/M2 for S/D/B, M3 for gates")
+        print(f"  ✓ {self.device_type.upper()} support enabled")
+        print(f"  ✓ Pattern-based routing")
         print("="*60)
 
 def main():
     """Main function"""
     
-    # Output file
+    # Load data to get device type
+    full_data = load_pattern_and_config()
+    device_type = full_data.get('metadata', {}).get('device_type', 'nmos')
+    
+    # Output file with appropriate name
     try:
         output
     except NameError:
-        output = "mismatch_array_4x4_from_gui.gds"
+        if device_type == 'both':
+            output = f"mismatch_array_{ARRAY_SIZE}x{ARRAY_SIZE}_both.gds"
+        elif device_type == 'pmos':
+            output = f"mismatch_array_{ARRAY_SIZE}x{ARRAY_SIZE}_pmos.gds"
+        else:
+            output = f"mismatch_array_{ARRAY_SIZE}x{ARRAY_SIZE}_nmos.gds"
     
     print(f"Output file: {output}")
     
     # Generate structure
-    generator = MismatchArray4x4()
-    generator.generate_complete_structure(output)
+    generator = ScalableMismatchArray()
+    generator.generate_structure(output)
     
     print(f"\nTo view the result:")
     print(f"  klayout {output}")
-    print("\nNext steps:")
-    print("  1. Verify gate routing matches GUI pattern")
-    print("  2. Check dimensions match GUI (pitch, spacing)")
-    print("  3. Run DRC checks")
-    print("  4. Test with different patterns from GUI")
 
 if __name__ == "__main__":
     main()
