@@ -1,8 +1,0 @@
-07/08/2025
-
-status: los transisotres dibujados y ruteados en la gui coinciden con el resultado generado por klayout. Tenemos el modo para clonar el ruteo al resto de las columnas fila por fila basados en el ruteo de los elementos de la primera columna
-
-TODO: COMO ESCALAR PARA NUEVAS DIMENSIONES? LA GUI DEBE TOMAR EN COSNIDERACION ESTAS NUEVAS DIMENSIONES PERO TAMBIEN EL SCRIPT MISMATCH_ARRAY_4X4_MODIFIED.PY DEBE CONSIDERAR UN CORRECTO ESPACIOAMIENTO ENTRE TRANSISTORES Y MANETENER LOS TRANSISTORES DENTRO DE GUARDRING DONDE LOS BORDES SON COMPARTIDOS Y LOS TRANSITORES ESTAN EN MEDIO del guardring CON UNA DISTANCIA DE 4u de todos sus bordes (distancia tambien debe ser configurable mediante una variable)
-
-
-todo: Eliminar/comentar la generacion del layout para pmos. Por ahora no lo necesitaremos
