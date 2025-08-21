@@ -1316,12 +1316,13 @@ class ScalableMismatchArray:
 
     def route_column_drains_tm1(self, array_cell, col_transistors, col):
         """
-        Route drains VERTICALLY with TopMetal1 - MOVED 1.5µm to the LEFT
+        Route drains VERTICALLY with TopMetal1 - MOVED 1.5μm to the LEFT
         Creates L-shaped M1 extension: vertical up, then horizontal LEFT
+        FIXED: Reduced vertical extension by 0.15μm to avoid M3 conflicts
         """
         
         m1_width = self.dbu(METAL1_WIDTH)
-        tm1_width = self.dbu(TOPMETAL1_WIDTH)  # 1.64µm wide
+        tm1_width = self.dbu(TOPMETAL1_WIDTH)  # 2.0μm wide (increased from 1.64μm)
         
         # Get terminal positions
         transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
@@ -1333,10 +1334,11 @@ class ScalableMismatchArray:
         
         # Extension parameters
         bbox_half_height = terminal_info['bbox_height'] / 2
-        vertical_extension = self.dbu(1.0)    # 1µm vertical extension above transistor
-        horizontal_offset = self.dbu(1.5)     # 1.5µm horizontal offset to the LEFT
+        # FIXED: Reduced vertical extension to avoid M3 conflicts
+        vertical_extension = self.dbu(0.85)    # WAS 1.0μm, NOW 0.85μm (0.15μm lower)
+        horizontal_offset = self.dbu(1.5)     # 1.5μm horizontal offset to the LEFT
         
-        print(f"    Column {col}: routing drains with TopMetal1 (1.5µm offset to LEFT)")
+        print(f"    Column {col}: routing drains with TopMetal1 (1.5μm LEFT, 0.85μm UP)")
         
         drain_tm1_points = []
         
@@ -1347,7 +1349,8 @@ class ScalableMismatchArray:
             
             # STEP 1: M1 vertical extension from center to above transistor
             ext_start_y = t['y']
-            ext_end_y = t['y'] + bbox_half_height + vertical_extension
+            # FIXED: Reduced extension to avoid M3 conflicts
+            ext_end_y = t['y'] + bbox_half_height + vertical_extension  # Now 0.85μm instead of 1.0μm
             
             # Vertical part of L-shape
             m1_vertical = db.Box(
@@ -1358,7 +1361,7 @@ class ScalableMismatchArray:
             )
             array_cell.shapes(self.layers['Metal1']).insert(m1_vertical)
             
-            # STEP 2: M1 horizontal extension to the LEFT (1.5µm)
+            # STEP 2: M1 horizontal extension to the LEFT (1.5μm)
             final_x = drain_x - horizontal_offset  # NEGATIVE offset for LEFT direction
             
             # Horizontal part of L-shape (from drain_x to final_x on the left)
@@ -1371,8 +1374,9 @@ class ScalableMismatchArray:
             array_cell.shapes(self.layers['Metal1']).insert(m1_horizontal)
             
             # STEP 3: Via stack at the END of horizontal extension (LEFT side)
+            # FIXED: Via position also moved down by 0.15μm
             via_x = final_x  # Via at the left end of horizontal extension
-            via_y = ext_end_y
+            via_y = ext_end_y  # Now 0.85μm above transistor instead of 1.0μm
             
             # Create full via stack M1->TopMetal1
             self.create_via_stack_m1_to_tm1(array_cell, via_x, via_y)
@@ -1398,7 +1402,7 @@ class ScalableMismatchArray:
         if drain_tm1_points:
             tm1_x = drain_tm1_points[0][0]  # All drains aligned at LEFT offset X position
             
-            # Full vertical TopMetal1 bus (1.64µm wide)
+            # Full vertical TopMetal1 bus (2.0μm wide)
             tm1_vertical = db.Box(
                 tm1_x - tm1_width//2,
                 bottom_extension_y,
@@ -1412,9 +1416,10 @@ class ScalableMismatchArray:
             self.add_text(array_cell, tm1_x, bottom_extension_y, label_text)
             self.add_text(array_cell, tm1_x, top_extension_y, label_text)
             
-            print(f"      TopMetal1 bus at X={tm1_x*self.layout.dbu:.3f}µm (1.5µm LEFT of drain)")
-            print(f"      Extends from Y={bottom_extension_y*self.layout.dbu:.3f}µm to Y={top_extension_y*self.layout.dbu:.3f}µm")
-
+            print(f"      TopMetal1 bus at X={tm1_x*self.layout.dbu:.3f}μm (1.5μm LEFT of drain)")
+            print(f"      Via height: Y={via_y*self.layout.dbu:.3f}μm (0.85μm above transistor center)")
+            print(f"      Extends from Y={bottom_extension_y*self.layout.dbu:.3f}μm to Y={top_extension_y*self.layout.dbu:.3f}μm")
+    
     def create_via_stack_m1_to_tm1(self, cell, x, y):
         """Create complete via stack from M1 to TopMetal1 with CORRECTED M5"""
         
