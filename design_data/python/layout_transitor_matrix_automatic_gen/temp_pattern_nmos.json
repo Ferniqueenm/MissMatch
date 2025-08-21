@@ -5,7 +5,7 @@
     "dummy_mode": "full",
     "device_type": "nmos",
     "transistor_W": 3.0,
-    "transistor_L": 1,
+    "transistor_L": 2,
     "guardring_spacing": 4.0
   },
   "pattern_data": {}

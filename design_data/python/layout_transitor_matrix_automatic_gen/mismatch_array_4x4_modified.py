@@ -253,10 +253,48 @@ class ScalableMismatchArray:
             'source_right_edge': None,
             'source_center': None,
             'gate_center': t_bbox.center().x,
-            'transistor_center': t_bbox.center().x
+            'transistor_center': t_bbox.center().x,
+            
+            # CRITICAL: Find actual GatPoly edges
+            'poly_top_edge': None,      # Top edge of actual poly
+            'poly_bottom_edge': None,    # Bottom edge of actual poly
+            'poly_center_x': None        # Center X of poly
         }
         
-        # Find Metal1 shapes (drain/source)
+        # Find actual GatPoly boundaries
+        poly_top = -float('inf')
+        poly_bottom = float('inf')
+        poly_center_x = t_bbox.center().x
+        
+        # Scan all GatPoly shapes to find the actual edges
+        for shape in transistor_cell.shapes(self.layers['GatPoly']).each():
+            if shape.is_box():
+                box = shape.box
+                # Find the topmost edge of any poly shape
+                if box.top > poly_top:
+                    poly_top = box.top
+                # Find the bottommost edge
+                if box.bottom < poly_bottom:
+                    poly_bottom = box.bottom
+                poly_center_x = box.center().x
+        
+        # Store the actual poly edges
+        if poly_top != -float('inf'):
+            terminals['poly_top_edge'] = poly_top
+            terminals['poly_bottom_edge'] = poly_bottom
+            terminals['poly_center_x'] = poly_center_x
+            
+            print(f"    Actual GatPoly edges found:")
+            print(f"      Top edge: {poly_top*self.layout.dbu:.3f}μm from origin")
+            print(f"      Bottom edge: {poly_bottom*self.layout.dbu:.3f}μm from origin")
+            print(f"      Bbox vs Poly top gap: {(t_bbox.top - poly_top)*self.layout.dbu:.3f}μm")
+        else:
+            print(f"    WARNING: Could not find GatPoly shapes!")
+            # Fallback: estimate based on typical gap
+            terminals['poly_top_edge'] = t_bbox.top - self.dbu(0.14)
+            terminals['poly_bottom_edge'] = t_bbox.bottom + self.dbu(0.14)
+        
+        # Find Metal1 shapes for drain/source (existing code)
         metal1_shapes = []
         for shape in transistor_cell.shapes(self.layers['Metal1']).each():
             if shape.is_box():
@@ -1089,6 +1127,7 @@ class ScalableMismatchArray:
         """
         Route gates HORIZONTALLY by rows with poly extension
         Poly extends 1.5μm ABOVE transistor -> Via Contact -> M3 horizontal bus
+        FIXED: For PMOS, find actual poly edge to avoid gap
         """
         print(f"\nRouting gate connections HORIZONTALLY by rows...")
         
@@ -1099,6 +1138,28 @@ class ScalableMismatchArray:
         transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
         transistor_cell = self.layout.cell(transistor_pcell)
         terminal_info = self.analyze_transistor_terminals(transistor_cell)
+        
+        # PMOS FIX: Find actual poly edge for PMOS only
+        poly_top_offset = 0
+        if self.device_type == 'pmos':
+            print("  PMOS detected: Finding actual GatPoly edge...")
+            poly_top = -float('inf')
+            
+            # Scan all GatPoly shapes to find the actual top edge
+            for shape in transistor_cell.shapes(self.layers['GatPoly']).each():
+                if shape.is_box():
+                    box = shape.box
+                    if box.top > poly_top:
+                        poly_top = box.top
+            
+            if poly_top != -float('inf'):
+                # Calculate offset from bbox top to actual poly top
+                poly_top_offset = terminal_info['bbox_top'] - poly_top
+                print(f"    Found poly top offset: {poly_top_offset*self.layout.dbu:.3f}μm below bbox top")
+            else:
+                # Fallback based on your observation
+                poly_top_offset = self.dbu(0.14)
+                print(f"    Using fallback offset: {poly_top_offset*self.layout.dbu:.3f}μm")
         
         # Group transistors by ROW (not column)
         rows = {}
@@ -1138,15 +1199,28 @@ class ScalableMismatchArray:
             print(f"  Row {row}: Connecting {len(row_transistors)} gates horizontally")
             
             # Y position for horizontal bus (above transistors)
-            bus_y = row_transistors[0]['y'] + terminal_info['bbox_height']/2 + poly_extension
+            # FIXED: Adjust for PMOS poly offset
+            if self.device_type == 'pmos':
+                # For PMOS, start from actual poly top
+                bus_y = row_transistors[0]['y'] + terminal_info['bbox_height']/2 - poly_top_offset + poly_extension
+            else:
+                # For NMOS, keep original calculation
+                bus_y = row_transistors[0]['y'] + terminal_info['bbox_height']/2 + poly_extension
             
             # Create poly extensions and via stacks for each transistor
             for t in row_transistors:
                 gate_x = t['x']  # Gate center
                 gate_y = t['y']  # Gate center
                 
-                # Extend poly 1.5μm upward from transistor top edge
-                poly_top = t['y'] + terminal_info['bbox_height']/2
+                # Extend poly upward from transistor top edge
+                # FIXED: Adjust starting point for PMOS
+                if self.device_type == 'pmos':
+                    # For PMOS, start from actual poly top
+                    poly_top = t['y'] + terminal_info['bbox_height']/2 - poly_top_offset
+                else:
+                    # For NMOS, use bbox top (original)
+                    poly_top = t['y'] + terminal_info['bbox_height']/2
+                
                 poly_extension_y = poly_top + poly_extension
                 
                 # Create poly extension (vertical stripe)
@@ -1191,10 +1265,11 @@ class ScalableMismatchArray:
             
             routes_created += 1
             
-            print(f"    Row {row}: Extended from X={left_extension_x*self.layout.dbu:.3f} to X={right_extension_x*self.layout.dbu:.3f}μm")
+            if self.device_type == 'pmos':
+                print(f"    Row {row}: Poly extends from actual edge (offset {poly_top_offset*self.layout.dbu:.3f}μm)")
         
         print(f"  Created {routes_created} horizontal gate routes")
-        return routes_created
+        return routes_created 
     
     def create_gate_via_stack_at_position(self, cell, x, y):
         """Create via stack from Poly to M3 at specific position"""
@@ -1989,7 +2064,6 @@ class ScalableMismatchArray:
                 array_cell.shapes(self.layers['Via1']).insert(via1_box)
         
         print(f"    ✓ Shorted {dummy_count} dummy transistors (internal only, no interconnection)")
-
 
 
     def print_final_report(self):
