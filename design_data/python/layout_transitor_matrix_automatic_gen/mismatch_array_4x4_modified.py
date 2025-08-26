@@ -1132,7 +1132,7 @@ class ScalableMismatchArray:
         print(f"\nRouting gate connections HORIZONTALLY by rows...")
         
         m3_width = self.dbu(METAL3_WIDTH)
-        poly_extension = self.dbu(1.5)  # 1.5μm extension above transistor
+        poly_extension = self.dbu(2)  # 1.5μm extension above transistor
         
         # Get transistor PCell for terminal analysis
         transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
@@ -1315,110 +1315,149 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Metal3']).insert(m3_pad)    
 
     def route_column_drains_tm1(self, array_cell, col_transistors, col):
+            """
+            Route drains VERTICALLY with TopMetal1
+            M1 bar: 2.32μm wide, vias stay at original position, M1 extends to cover them
+            """
+            
+            m1_bar_width = self.dbu(2.32)  # Width of M1 bar
+            tm1_width = self.dbu(TOPMETAL1_WIDTH)  # 2.0μm wide
+            
+            # Get terminal positions
+            transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+            transistor_cell = self.layout.cell(transistor_pcell)
+            terminal_info = self.analyze_transistor_terminals(transistor_cell)
+            
+            # Drain position
+            drain_x_offset = terminal_info['drain_center'] - terminal_info['transistor_center']
+            
+            # Original via position (keep unchanged)
+            bbox_half_height = terminal_info['bbox_height'] / 2
+            original_extension = self.dbu(0.85)  # Original extension above transistor
+            
+            print(f"    Column {col}: routing drains with M1 bar (2.32μm wide)")
+            
+            drain_tm1_points = []
+            total_vias = 0
+            
+            for t in col_transistors:
+                # Original drain center position
+                drain_center_x = t['x'] + drain_x_offset
+                
+                # M1 bar expands LEFT from drain center
+                m1_left_edge = drain_center_x - m1_bar_width
+                m1_right_edge = drain_center_x
+                
+                # Via position (keep original)
+                via_array_center_x = drain_center_x - m1_bar_width/2
+                via_top_y = t['y'] + bbox_half_height + original_extension
+                
+                # Create vertical via array first
+                num_vias = self.create_vertical_via_array_m1_to_tm1(
+                    array_cell, 
+                    via_array_center_x,
+                    via_top_y,
+                    m1_bar_width
+                )
+                
+                # Now determine M1 extent to cover all vias with proper enclosure
+                # Vias extend downward from via_top_y
+                via_bottom_y = via_top_y - self.dbu(3 * 0.84)  # 3 vias * 0.84μm pitch
+                m1_enclosure = self.dbu(0.1)  # Enclosure around vias
+                
+                # Extend M1 to cover vias plus additional extensions requested
+                ext_top_y = via_top_y + self.dbu(0.3) + m1_enclosure
+                ext_bottom_y = min(t['y'], via_bottom_y - m1_enclosure)
+                
+                # Create M1 bar that covers all vias
+                m1_bar = db.Box(
+                    m1_left_edge,
+                    ext_bottom_y,
+                    m1_right_edge,
+                    ext_top_y
+                )
+                array_cell.shapes(self.layers['Metal1']).insert(m1_bar)
+                
+                total_vias += num_vias
+                drain_tm1_points.append((via_array_center_x, via_top_y))
+            
+            # Create vertical TopMetal1 bus
+            all_transistors = [t for t in array_cell.parent_transistor_info] if hasattr(array_cell, 'parent_transistor_info') else col_transistors
+            
+            min_y_transistor = min(t['y'] for t in all_transistors)
+            max_y_transistor = max(t['y'] for t in all_transistors)
+            
+            bottom_guard_edge = min_y_transistor - terminal_info['bbox_height']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
+            top_guard_edge = max_y_transistor + terminal_info['bbox_height']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+            
+            ext_length = self.dbu(1.5)
+            bottom_extension_y = bottom_guard_edge - ext_length
+            top_extension_y = top_guard_edge + ext_length
+            
+            if drain_tm1_points:
+                tm1_x = drain_tm1_points[0][0]
+                
+                tm1_vertical = db.Box(
+                    tm1_x - tm1_width//2,
+                    bottom_extension_y,
+                    tm1_x + tm1_width//2,
+                    top_extension_y
+                )
+                array_cell.shapes(self.layers['TopMetal1']).insert(tm1_vertical)
+                
+                label_text = f"D_COL{col}"
+                self.add_text(array_cell, tm1_x, bottom_extension_y, label_text)
+                self.add_text(array_cell, tm1_x, top_extension_y, label_text)
+                
+                print(f"      Created {total_vias} vias in vertical arrangement")
+
+    def create_vertical_via_array_m1_to_tm1(self, cell, x_center, y_base, width_available):
         """
-        Route drains VERTICALLY with TopMetal1 - MOVED 1.5μm to the LEFT
-        Creates L-shaped M1 extension: vertical up, then horizontal LEFT
-        FIXED: Reduced vertical extension by 0.15μm to avoid M3 conflicts
+        Create VERTICAL array of vias from M1 to TopMetal1
+        FIXED: Create single continuous TM1 pad instead of individual pads
         """
+        vias_created = 0
         
-        m1_width = self.dbu(METAL1_WIDTH)
-        tm1_width = self.dbu(TOPMETAL1_WIDTH)  # 2.0μm wide (increased from 1.64μm)
+        # Via sizes and spacings
+        topvia1_size = self.dbu(0.42)
+        topvia1_spacing = self.dbu(0.42)
+        topvia1_pitch = topvia1_size + topvia1_spacing  # 0.84μm
         
-        # Get terminal positions
-        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
-        transistor_cell = self.layout.cell(transistor_pcell)
-        terminal_info = self.analyze_transistor_terminals(transistor_cell)
+        # For vertical arrangement, we can fit 3 vias vertically
+        num_vias = 3
         
-        # Drain X offset (left edge of drain M1)
-        drain_x_offset = terminal_info['drain_left_edge'] - terminal_info['transistor_center']
+        # Calculate vertical positions (stacked from bottom to top)
+        via_y_positions = []
+        for i in range(num_vias):
+            y_offset = y_base - i * topvia1_pitch  # Stack downward from top
+            via_y_positions.append(y_offset)
         
-        # Extension parameters
-        bbox_half_height = terminal_info['bbox_height'] / 2
-        # FIXED: Reduced vertical extension to avoid M3 conflicts
-        vertical_extension = self.dbu(0.85)    # WAS 1.0μm, NOW 0.85μm (0.15μm lower)
-        horizontal_offset = self.dbu(1.5)     # 1.5μm horizontal offset to the LEFT
+        # Create via stacks at each vertical position
+        # DON'T create individual TM1 pads
+        for via_y in via_y_positions:
+            # Create complete via stack WITHOUT TM1 pad
+            self.create_single_via_stack_m1_to_tm1(cell, x_center, via_y, create_tm1_pad=False)
+            vias_created += 1
         
-        print(f"    Column {col}: routing drains with TopMetal1 (1.5μm LEFT, 0.85μm UP)")
+        # Create SINGLE continuous TopMetal1 pad covering all vias vertically
+        # Ensure minimum width of 1.64μm per DRC
+        tm1_width = max(self.dbu(TOPMETAL1_WIDTH), self.dbu(1.64))  # At least 1.64μm
         
-        drain_tm1_points = []
+        # Calculate height to cover all vias with some margin
+        top_via_y = via_y_positions[0]
+        bottom_via_y = via_y_positions[-1]
+        tm1_height = (top_via_y - bottom_via_y) + topvia1_size + self.dbu(0.2)
         
-        # Create L-shaped M1 extensions and via stacks for each transistor
-        for t in col_transistors:
-            # Starting position at drain
-            drain_x = t['x'] + drain_x_offset
-            
-            # STEP 1: M1 vertical extension from center to above transistor
-            ext_start_y = t['y']
-            # FIXED: Reduced extension to avoid M3 conflicts
-            ext_end_y = t['y'] + bbox_half_height + vertical_extension  # Now 0.85μm instead of 1.0μm
-            
-            # Vertical part of L-shape
-            m1_vertical = db.Box(
-                drain_x - m1_width//2,
-                ext_start_y - m1_width//2,
-                drain_x + m1_width//2,
-                ext_end_y + m1_width//2
-            )
-            array_cell.shapes(self.layers['Metal1']).insert(m1_vertical)
-            
-            # STEP 2: M1 horizontal extension to the LEFT (1.5μm)
-            final_x = drain_x - horizontal_offset  # NEGATIVE offset for LEFT direction
-            
-            # Horizontal part of L-shape (from drain_x to final_x on the left)
-            m1_horizontal = db.Box(
-                final_x - m1_width//2,      # Left edge at final position
-                ext_end_y - m1_width//2,
-                drain_x + m1_width//2,       # Right edge at drain position
-                ext_end_y + m1_width//2
-            )
-            array_cell.shapes(self.layers['Metal1']).insert(m1_horizontal)
-            
-            # STEP 3: Via stack at the END of horizontal extension (LEFT side)
-            # FIXED: Via position also moved down by 0.15μm
-            via_x = final_x  # Via at the left end of horizontal extension
-            via_y = ext_end_y  # Now 0.85μm above transistor instead of 1.0μm
-            
-            # Create full via stack M1->TopMetal1
-            self.create_via_stack_m1_to_tm1(array_cell, via_x, via_y)
-            
-            drain_tm1_points.append((via_x, via_y))
+        # Single continuous TM1 pad
+        tm1_pad = db.Box(
+            x_center - tm1_width//2,
+            bottom_via_y - topvia1_size//2 - self.dbu(0.1),  # Bottom
+            x_center + tm1_width//2,
+            top_via_y + topvia1_size//2 + self.dbu(0.1)      # Top
+        )
+        cell.shapes(self.layers['TopMetal1']).insert(tm1_pad)
         
-        # Find vertical extent (guard ring edges)
-        all_transistors = [t for t in array_cell.parent_transistor_info] if hasattr(array_cell, 'parent_transistor_info') else col_transistors
-        
-        min_y_transistor = min(t['y'] for t in all_transistors)
-        max_y_transistor = max(t['y'] for t in all_transistors)
-        
-        # Guard ring edges in Y direction
-        bottom_guard_edge = min_y_transistor - terminal_info['bbox_height']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
-        top_guard_edge = max_y_transistor + terminal_info['bbox_height']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
-        
-        # Extension beyond guard rings
-        ext_length = self.dbu(1.5)
-        bottom_extension_y = bottom_guard_edge - ext_length
-        top_extension_y = top_guard_edge + ext_length
-        
-        # Create vertical TopMetal1 bus at LEFT OFFSET position
-        if drain_tm1_points:
-            tm1_x = drain_tm1_points[0][0]  # All drains aligned at LEFT offset X position
-            
-            # Full vertical TopMetal1 bus (2.0μm wide)
-            tm1_vertical = db.Box(
-                tm1_x - tm1_width//2,
-                bottom_extension_y,
-                tm1_x + tm1_width//2,
-                top_extension_y
-            )
-            array_cell.shapes(self.layers['TopMetal1']).insert(tm1_vertical)
-            
-            # Add labels at top and bottom
-            label_text = f"D_COL{col}"
-            self.add_text(array_cell, tm1_x, bottom_extension_y, label_text)
-            self.add_text(array_cell, tm1_x, top_extension_y, label_text)
-            
-            print(f"      TopMetal1 bus at X={tm1_x*self.layout.dbu:.3f}μm (1.5μm LEFT of drain)")
-            print(f"      Via height: Y={via_y*self.layout.dbu:.3f}μm (0.85μm above transistor center)")
-            print(f"      Extends from Y={bottom_extension_y*self.layout.dbu:.3f}μm to Y={top_extension_y*self.layout.dbu:.3f}μm")
+        return vias_created
     
     def create_via_stack_m1_to_tm1(self, cell, x, y):
         """Create complete via stack from M1 to TopMetal1 with CORRECTED M5"""
@@ -1619,108 +1658,93 @@ class ScalableMismatchArray:
 
     def route_row_sources_tm2(self, array_cell, row_transistors, row):
         """
-        Route sources HORIZONTALLY with TopMetal2 - WITH L-SHAPED EXTENSION
-        M1 extension: vertical DOWN (2µm) then horizontal RIGHT (1.5µm)
-        This moves the TM1 pad (part of M1->TM2 stack) away from drain TM1 lines
+        Route sources HORIZONTALLY with TopMetal2
+        M1 bar: 2.32μm wide, vias stay at original position, M1 extends to cover them
         """
         
-        m1_width = self.dbu(METAL1_WIDTH)
-        tm2_width = self.dbu(TOPMETAL2_WIDTH)  # 2.00µm wide
+        m1_bar_width = self.dbu(2.32)  # Width of M1 bar
+        tm2_width = self.dbu(TOPMETAL2_WIDTH)  # 2.0μm wide
         
         # Get terminal positions
         transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
         transistor_cell = self.layout.cell(transistor_pcell)
         terminal_info = self.analyze_transistor_terminals(transistor_cell)
         
-        # Source X offset (right edge of source M1)
-        source_x_offset = terminal_info['source_right_edge'] - terminal_info['transistor_center']
+        # Source position
+        source_x_offset = terminal_info['source_center'] - terminal_info['transistor_center']
         
-        # Extension parameters
+        # Original via position (keep unchanged)
         bbox_half_height = terminal_info['bbox_height'] / 2
-        vertical_extension = self.dbu(2.0)    # 2µm vertical extension downward
-        horizontal_offset = self.dbu(1.5)     # 1.5µm horizontal offset to the RIGHT
+        original_extension = self.dbu(2.5)  # Original extension downward
         
-        # Correct row number for labeling
         actual_row_number = (ARRAY_SIZE - 1) - row
         
-        print(f"    Row {row} (GUI row {actual_row_number}): routing sources with L-extension (2µm down, 1.5µm right)")
+        print(f"    Row {row} (GUI row {actual_row_number}): routing sources with M1 bar (2.32μm wide)")
         
         source_tm2_points = []
+        total_vias = 0
         
-        # Create L-shaped M1 extensions and via stacks
         for t in row_transistors:
-            # Starting position at source
-            source_x = t['x'] + source_x_offset
+            # Original source center position
+            source_center_x = t['x'] + source_x_offset
             
-            # STEP 1: M1 vertical extension downward from center
-            ext_start_y = t['y']
-            ext_end_y = t['y'] - bbox_half_height - vertical_extension  # 2µm below transistor
+            # M1 bar expands RIGHT from source center
+            m1_left_edge = source_center_x
+            m1_right_edge = source_center_x + m1_bar_width
             
-            # Vertical part of L-shape (going DOWN)
-            m1_vertical = db.Box(
-                source_x - m1_width//2,
-                ext_end_y - m1_width//2,
-                source_x + m1_width//2,
-                ext_start_y + m1_width//2
+            # Via position (keep original)
+            via_array_center_x = source_center_x + m1_bar_width/2
+            via_bottom_y = t['y'] - bbox_half_height - original_extension
+            
+            # Create vertical via array first
+            num_vias = self.create_vertical_via_array_m1_to_tm2(
+                array_cell,
+                via_array_center_x,
+                via_bottom_y,
+                m1_bar_width
             )
-            array_cell.shapes(self.layers['Metal1']).insert(m1_vertical)
             
-            # STEP 2: M1 horizontal extension to the RIGHT (1.5µm)
-            final_x = source_x + horizontal_offset  # Move RIGHT from source
+            # Now determine M1 extent to cover all vias with proper enclosure
+            # Vias extend upward from via_bottom_y
+            via_top_y = via_bottom_y + self.dbu(2 * 1.96)  # 2 vias * 1.96μm pitch
+            m1_enclosure = self.dbu(0.1)  # Enclosure around vias
             
-            # Horizontal part of L-shape (going RIGHT)
-            m1_horizontal = db.Box(
-                source_x - m1_width//2,
-                ext_end_y - m1_width//2,
-                final_x + m1_width//2,
-                ext_end_y + m1_width//2
+            # Extend M1 to cover vias plus additional extensions requested
+            ext_top_y = max(t['y'] + self.dbu(0.26), via_top_y + m1_enclosure)
+            ext_bottom_y = via_bottom_y - self.dbu(0.9) - m1_enclosure
+            
+            # Create M1 bar that covers all vias
+            m1_bar = db.Box(
+                m1_left_edge,
+                ext_bottom_y,
+                m1_right_edge,
+                ext_top_y
             )
-            array_cell.shapes(self.layers['Metal1']).insert(m1_horizontal)
+            array_cell.shapes(self.layers['Metal1']).insert(m1_bar)
             
-            # STEP 3: Via stack at the END of horizontal extension (RIGHT side)
-            via_x = final_x  # Via at the right end of horizontal extension
-            via_y = ext_end_y  # At the bottom of vertical extension
-            
-            # Create full via stack M1->TopMetal2
-            # IMPORTANT: This stack includes a TM1 pad that is now 1.5µm to the RIGHT
-            # away from the vertical TM1 lines of the drains
-            self.create_via_stack_m1_to_tm2(array_cell, via_x, via_y)
-            
-            source_tm2_points.append((via_x, via_y))
+            total_vias += num_vias
+            source_tm2_points.append((via_array_center_x, via_bottom_y))
         
-        # Calculate horizontal extent for the TM2 bus
+        # Create horizontal TopMetal2 bus
         all_transistors = array_cell.parent_transistor_info if hasattr(array_cell, 'parent_transistor_info') else row_transistors
         
         if all_transistors:
             min_x_transistor = min(t['x'] for t in all_transistors)
             max_x_transistor = max(t['x'] for t in all_transistors)
             
-            # Guard ring edges in X direction
             left_guard_edge = min_x_transistor - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
             right_guard_edge = max_x_transistor + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
         else:
-            # Fallback calculation
             left_guard_edge = 0
-            dummy_mode = self.metadata.get('dummy_mode', 'sides')
-            total_cols = ARRAY_SIZE + 2 if dummy_mode in ['sides', 'full'] else ARRAY_SIZE
-            
-            if len(row_transistors) >= 2:
-                pitch_x = abs(row_transistors[1]['x'] - row_transistors[0]['x'])
-            else:
-                pitch_x = self.dbu(self.pitch_x)
-            
-            right_guard_edge = total_cols * pitch_x
+            right_guard_edge = self.dbu(100)
         
-        # Extension beyond guard rings (may need to increase due to RIGHT offset)
-        ext_length = self.dbu(2.0)  # Increased to account for the horizontal offset
+        ext_length = self.dbu(2.0)
         left_extension_x = left_guard_edge - ext_length
         right_extension_x = right_guard_edge + ext_length
         
-        # Create horizontal TopMetal2 bus at the offset position
         if source_tm2_points:
-            tm2_y = source_tm2_points[0][1]  # All sources at same Y (2µm below transistor)
+            tm2_y = source_tm2_points[0][1]
             
-            # Full horizontal TopMetal2 bus (2.00µm wide)
             tm2_horizontal = db.Box(
                 left_extension_x,
                 tm2_y - tm2_width//2,
@@ -1729,14 +1753,243 @@ class ScalableMismatchArray:
             )
             array_cell.shapes(self.layers['TopMetal2']).insert(tm2_horizontal)
             
-            # Add labels at both ends
             label_text = f"S_R{actual_row_number}"
             self.add_text(array_cell, left_extension_x, tm2_y, label_text)
             self.add_text(array_cell, right_extension_x, tm2_y, label_text)
             
-            print(f"      TopMetal2 bus at Y={tm2_y*self.layout.dbu:.3f}µm")
-            print(f"      Via stacks offset 1.5µm RIGHT from sources")
-            print(f"      TM1 pads in via stack now separated from drain TM1 lines")
+            print(f"      Created {total_vias} vias in vertical arrangement")
+                
+    def create_vertical_via_array_m1_to_tm2(self, cell, x_center, y_base, width_available):
+        """
+        Create VERTICAL array of vias from M1 to TopMetal2
+        FIXED: Ensure proper TM1 handling for TM2 stack
+        """
+        vias_created = 0
+        
+        # TopVia2 dimensions
+        topvia2_size = self.dbu(0.90)
+        topvia2_spacing = self.dbu(1.06)
+        topvia2_pitch = topvia2_size + topvia2_spacing  # 1.96μm
+        
+        # Two vias vertically arranged
+        num_vias = 2
+        via_y_positions = []
+        for i in range(num_vias):
+            y_offset = y_base + i * topvia2_pitch  # Stack upward from bottom
+            via_y_positions.append(y_offset)
+        
+        # First create a continuous TM1 pad for all positions
+        # This avoids individual small TM1 pads
+        tm1_width = max(self.dbu(TOPMETAL1_WIDTH), self.dbu(1.64))  # At least 1.64μm
+        top_via_y = via_y_positions[-1]
+        bottom_via_y = via_y_positions[0]
+        
+        # Create single continuous TM1 pad first
+        tm1_continuous = db.Box(
+            x_center - tm1_width//2,
+            bottom_via_y - topvia2_size//2 - self.dbu(0.2),
+            x_center + tm1_width//2,
+            top_via_y + topvia2_size//2 + self.dbu(0.2)
+        )
+        cell.shapes(self.layers['TopMetal1']).insert(tm1_continuous)
+        
+        # Now create via stacks WITHOUT individual TM1 pads
+        for via_y in via_y_positions:
+            # Create stack M1->TopVia1 WITHOUT TM1 pad
+            self.create_single_via_stack_m1_to_tm1(cell, x_center, via_y, create_tm1_pad=False)
+            
+            # TopVia2 (TopMetal1 to TopMetal2)
+            topvia2_box = db.Box(
+                x_center - topvia2_size//2, via_y - topvia2_size//2,
+                x_center + topvia2_size//2, via_y + topvia2_size//2
+            )
+            cell.shapes(self.layers['TopVia2']).insert(topvia2_box)
+            
+            vias_created += 1
+        
+        # Create continuous TopMetal2 pad covering both vias
+        tm2_width = self.dbu(TOPMETAL2_WIDTH)  # 2.0μm wide
+        tm2_height_total = (top_via_y - bottom_via_y) + topvia2_size + self.dbu(0.4)
+        
+        tm2_pad = db.Box(
+            x_center - tm2_width//2,
+            bottom_via_y - topvia2_size//2 - self.dbu(0.2),  # Bottom
+            x_center + tm2_width//2,
+            top_via_y + topvia2_size//2 + self.dbu(0.2)      # Top
+        )
+        cell.shapes(self.layers['TopMetal2']).insert(tm2_pad)
+        
+        return vias_created    
+
+    def create_via_array_m1_to_tm1(self, cell, x_center, y_center, m1_width):
+        """
+        FIXED VERSION: Create horizontal array of vias without violating TM1 DRC
+        This version is for the original horizontal gate routing
+        """
+        vias_created = 0
+        
+        # Via sizes and spacings
+        via1_size = self.dbu(0.19)
+        topvia1_size = self.dbu(0.42)
+        topvia1_spacing = self.dbu(0.42)
+        topvia1_pitch = topvia1_size + topvia1_spacing  # 0.84μm
+        
+        # Calculate how many TopVia1 can fit horizontally
+        num_topvia1 = int((m1_width - topvia1_size) / topvia1_pitch) + 1
+        num_topvia1 = min(num_topvia1, 3)  # Limit to 3
+        
+        # Calculate actual positions for TopVia1
+        if num_topvia1 == 1:
+            via_positions = [0]
+        elif num_topvia1 == 2:
+            offset = topvia1_pitch / 2
+            via_positions = [-offset, offset]
+        else:  # 3 vias
+            via_positions = [-topvia1_pitch, 0, topvia1_pitch]
+        
+        # Create via stacks WITHOUT individual TM1 pads
+        for x_offset in via_positions:
+            via_x = x_center + x_offset
+            
+            # Create stack M1->TopVia1 WITHOUT TM1 pad
+            # (The continuous pad will be created at the end)
+            
+            # Via1 through Via4 and metal pads
+            via_size = self.dbu(0.19)
+            enc = self.dbu(0.06)
+            
+            for layer in ['Via1', 'Via2', 'Via3', 'Via4']:
+                via_box = db.Box(
+                    via_x - via_size//2, y_center - via_size//2,
+                    via_x + via_size//2, y_center + via_size//2
+                )
+                cell.shapes(self.layers[layer]).insert(via_box)
+            
+            for layer in ['Metal2', 'Metal3', 'Metal4', 'Metal5']:
+                pad = db.Box(
+                    via_x - via_size//2 - enc, y_center - via_size//2 - enc,
+                    via_x + via_size//2 + enc, y_center + via_size//2 + enc
+                )
+                cell.shapes(self.layers[layer]).insert(pad)
+            
+            # TopVia1
+            topvia1_box = db.Box(
+                via_x - topvia1_size//2, y_center - topvia1_size//2,
+                via_x + topvia1_size//2, y_center + topvia1_size//2
+            )
+            cell.shapes(self.layers['TopVia1']).insert(topvia1_box)
+            
+            vias_created += 1
+        
+        # Create SINGLE continuous TopMetal1 pad covering all vias
+        tm1_width = self.dbu(TOPMETAL1_WIDTH)  # 2.0μm wide (already > 1.64μm minimum)
+        
+        # Width to cover all vias
+        if num_topvia1 > 1:
+            leftmost_x = x_center + via_positions[0]
+            rightmost_x = x_center + via_positions[-1]
+            tm1_pad_width = (rightmost_x - leftmost_x) + topvia1_size + self.dbu(0.2)
+            tm1_pad_center = (leftmost_x + rightmost_x) / 2
+        else:
+            tm1_pad_width = tm1_width
+            tm1_pad_center = x_center
+        
+        tm1_pad = db.Box(
+            tm1_pad_center - tm1_pad_width//2,
+            y_center - tm1_width//2,
+            tm1_pad_center + tm1_pad_width//2,
+            y_center + tm1_width//2
+        )
+        cell.shapes(self.layers['TopMetal1']).insert(tm1_pad)
+        
+        return vias_created
+
+    def create_single_via_stack_m1_to_tm1(self, cell, x, y, create_tm1_pad=False):
+            """
+            Helper function for single via stack (used by TM2 array)
+            FIXED: Only create TM1 pad if explicitly requested to avoid DRC violations
+            """
+            # Via sizes
+            via_size = self.dbu(0.19)
+            topvia1_size = self.dbu(0.42)
+            enc = self.dbu(0.06)
+            
+            # Via1 through Via4
+            for layer in ['Via1', 'Via2', 'Via3', 'Via4']:
+                via_box = db.Box(
+                    x - via_size//2, y - via_size//2,
+                    x + via_size//2, y + via_size//2
+                )
+                cell.shapes(self.layers[layer]).insert(via_box)
+            
+            # Metal pads M2-M5
+            for layer in ['Metal2', 'Metal3', 'Metal4', 'Metal5']:
+                pad = db.Box(
+                    x - via_size//2 - enc, y - via_size//2 - enc,
+                    x + via_size//2 + enc, y + via_size//2 + enc
+                )
+                cell.shapes(self.layers[layer]).insert(pad)
+            
+            # TopVia1
+            topvia1_box = db.Box(
+                x - topvia1_size//2, y - topvia1_size//2,
+                x + topvia1_size//2, y + topvia1_size//2
+            )
+            cell.shapes(self.layers['TopVia1']).insert(topvia1_box)
+            
+            # ONLY create TM1 pad if explicitly requested
+            # This avoids creating small pads that violate DRC
+            if create_tm1_pad:
+                # Use minimum allowed size for TM1
+                tm1_size = self.dbu(1.64)  # Minimum TM1 width per DRC
+                tm1_pad = db.Box(
+                    x - tm1_size//2, y - tm1_size//2,
+                    x + tm1_size//2, y + tm1_size//2
+                )
+                cell.shapes(self.layers['TopMetal1']).insert(tm1_pad)
+
+    def create_via_array_m1_to_tm2(self, cell, x_center, y_center, m1_width):
+        """
+        Create array of vias from M1 to TopMetal2
+        For TopVia2 (0.90μm + 1.06μm spacing), we need vertical arrangement
+        """
+        vias_created = 0
+        
+        # TopVia2 is too large for horizontal array in 2.64μm width
+        # So we create a 2x1 vertical array
+        topvia2_size = self.dbu(0.90)
+        topvia2_spacing = self.dbu(1.06)
+        topvia2_pitch = topvia2_size + topvia2_spacing  # 1.96μm
+        
+        # Two vias vertically arranged
+        via_y_positions = [-topvia2_pitch/2, topvia2_pitch/2]
+        
+        for y_offset in via_y_positions:
+            via_y = y_center + y_offset
+            
+            # Create full stack M1->TopMetal1 first
+            # (reuse the existing stack but single via)
+            self.create_single_via_stack_m1_to_tm1(cell, x_center, via_y)
+            
+            # TopVia2 (TopMetal1 to TopMetal2)
+            topvia2_box = db.Box(
+                x_center - topvia2_size//2, via_y - topvia2_size//2,
+                x_center + topvia2_size//2, via_y + topvia2_size//2
+            )
+            cell.shapes(self.layers['TopVia2']).insert(topvia2_box)
+            
+            vias_created += 1
+        
+        # Create continuous TopMetal2 pad covering both vias
+        tm2_width = self.dbu(TOPMETAL2_WIDTH)  # 2.0μm wide
+        tm2_height = self.dbu(4.0)  # Extended to cover both vias
+        tm2_pad = db.Box(
+            x_center - tm2_width//2, y_center - tm2_height//2,
+            x_center + tm2_width//2, y_center + tm2_height//2
+        )
+        cell.shapes(self.layers['TopMetal2']).insert(tm2_pad)
+        
+        return vias_created
 
     def create_via_stack_m1_to_m4(self, cell, x, y):
         """Create via stack from M1 to M4 with CORRECT via sizes"""
