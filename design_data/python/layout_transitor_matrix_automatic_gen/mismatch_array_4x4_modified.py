@@ -644,71 +644,340 @@ class ScalableMismatchArray:
 
     def create_shared_guardring_structure_pmos(self, array_cell, geom, rows, cols):
         """
-        Create N-well guardring for PMOS - CORRECT IHP IMPLEMENTATION
-        NO contacts at intersections - only Activ/nSD/NWell/Metal1 layers
+        Create DUAL guardring for PMOS:
+        - Inner ring: N-well contact (VDD) - nSD+Activ
+        - Outer ring: P-substrate contact (VSS) - pSD+Activ
         """
-        print("\nCreating N-well guardring structure for PMOS (IHP-compliant)...")
+        print("\nCreating dual guardring structure for PMOS...")
         
         gr_width = geom['gr_width']
         
-        # First create N-well for entire PMOS array
-        nwell_margin = self.dbu(0.5)
+        # First create N-well for entire PMOS array (including both rings)
+        nwell_margin = self.dbu(2.0)  # Extended to cover outer ring
         nwell_box = db.Box(
             -nwell_margin, 
             -nwell_margin,
-            geom['total_width'] + nwell_margin,
-            geom['total_height'] + nwell_margin
+            geom['total_width'] + gr_width + self.dbu(1.0) + nwell_margin,  # Include outer ring
+            geom['total_height'] + gr_width + self.dbu(1.0) + nwell_margin
         )
         array_cell.shapes(self.layers['NWell']).insert(nwell_box)
         
-        # Create guardring stripes (N-well contact)
+        # INNER RING: N-well contact (VDD) - Original guardring
         for col in range(cols + 1):
             x = col * geom['pitch_x']
             stripe_box = db.Box(
                 x, 0,
                 x + gr_width, geom['total_height']
             )
-            
-            # Active area
             array_cell.shapes(self.layers['Activ']).insert(stripe_box)
-            
-            # N+ implant for N-well contact (nSD layer)
             array_cell.shapes(self.layers['nSD']).insert(stripe_box)
         
-        # Horizontal stripes
         for row in range(rows + 1):
             y = row * geom['pitch_y']
             stripe_box = db.Box(
                 0, y,
                 geom['total_width'], y + gr_width
             )
-            
             array_cell.shapes(self.layers['Activ']).insert(stripe_box)
             array_cell.shapes(self.layers['nSD']).insert(stripe_box)
         
-        # Add Metal1 at intersections for connectivity (but NO contacts)
-        m1_size = self.dbu(0.4)  # Larger M1 pad at intersections
+        # OUTER RING: P-substrate contact (VSS) - New guardring
+        outer_spacing = self.dbu(1.0)  # Space between rings
+        outer_offset = gr_width + outer_spacing
         
+        # Vertical stripes of outer ring
+        for i in [0, 1]:  # Left and right only
+            if i == 0:
+                x = -outer_offset
+            else:
+                x = geom['total_width'] + outer_spacing
+            
+            stripe_box = db.Box(
+                x, -outer_offset,
+                x + gr_width, geom['total_height'] + outer_offset
+            )
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            array_cell.shapes(self.layers['pSD']).insert(stripe_box)  # P-type for VSS
+        
+        # Horizontal stripes of outer ring
+        for i in [0, 1]:  # Bottom and top only
+            if i == 0:
+                y = -outer_offset
+            else:
+                y = geom['total_height'] + outer_spacing
+            
+            stripe_box = db.Box(
+                -outer_offset, y,
+                geom['total_width'] + outer_offset, y + gr_width
+            )
+            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            array_cell.shapes(self.layers['pSD']).insert(stripe_box)  # P-type for VSS
+        
+        # Add M1 pads and contacts to both rings
+        self.add_contacts_to_dual_guardrings(array_cell, geom, rows, cols, outer_offset)
+        
+        print(f"✓ Created dual guardring for PMOS:")
+        print(f"  Inner ring: N-well contact (VDD)")
+        print(f"  Outer ring: P-substrate contact (VSS)")
+        
+        # Update geometry for extended routing
+        geom['has_outer_ring'] = True
+        geom['outer_ring_offset'] = outer_offset
+        
+        return geom
+    
+    def add_contacts_to_dual_guardrings(self, array_cell, geom, rows, cols, outer_offset):
+        """
+        Add contacts to both guardrings (inner VDD, outer VSS) for PMOS
+        Maintains 0.60μm spacing, avoids intersections
+        """
+        gr_width = geom['gr_width']
+        cont_size = self.dbu(0.22)
+        cont_spacing = self.dbu(0.60)  # 50% increased spacing
+        cont_pitch = cont_size + cont_spacing  # 0.82μm pitch
+        m1_enc = self.dbu(0.06)
+        
+        print("  Adding contacts to dual guardring structure...")
+        contacts_added_inner = 0
+        contacts_added_outer = 0
+        
+        # ========== INNER RING CONTACTS (VDD - N-well) ==========
+        
+        # Calculate intersection points for inner ring to avoid
+        inner_intersections = []
         for row in range(rows + 1):
             for col in range(cols + 1):
-                x_center = col * geom['pitch_x'] + gr_width // 2
-                y_center = row * geom['pitch_y'] + gr_width // 2
+                x_int = col * geom['pitch_x'] + gr_width // 2
+                y_int = row * geom['pitch_y'] + gr_width // 2
+                inner_intersections.append((x_int, y_int))
+        
+        exclusion_radius = self.dbu(0.5)
+        
+        def is_near_intersection(x, y, intersections):
+            for int_x, int_y in intersections:
+                if abs(x - int_x) < exclusion_radius and abs(y - int_y) < exclusion_radius:
+                    return True
+            return False
+        
+        # Vertical stripes of inner ring
+        for col in range(cols + 1):
+            x_center = col * geom['pitch_x'] + gr_width // 2
+            
+            for row_segment in range(rows + 1):
+                if row_segment == 0:
+                    y_start = 0
+                    y_end = geom['pitch_y'] - exclusion_radius
+                elif row_segment == rows:
+                    y_start = row_segment * geom['pitch_y'] + gr_width + exclusion_radius
+                    y_end = geom['total_height']
+                else:
+                    y_start = row_segment * geom['pitch_y'] + gr_width + exclusion_radius
+                    y_end = (row_segment + 1) * geom['pitch_y'] - exclusion_radius
                 
-                # Metal1 pad at intersection (NO Contact underneath)
-                m1_box = db.Box(
-                    x_center - m1_size//2,
-                    y_center - m1_size//2,
-                    x_center + m1_size//2,
-                    y_center + m1_size//2
+                segment_length = y_end - y_start
+                if segment_length > cont_size:
+                    num_contacts = int((segment_length - cont_size) / cont_pitch) + 1
+                    
+                    if num_contacts > 1:
+                        actual_pitch = (segment_length - cont_size) / (num_contacts - 1)
+                    else:
+                        actual_pitch = 0
+                    
+                    for i in range(num_contacts):
+                        if num_contacts == 1:
+                            y = y_start + segment_length / 2
+                        else:
+                            y = y_start + cont_size/2 + i * actual_pitch
+                        
+                        if not is_near_intersection(x_center, y, inner_intersections):
+                            cont_box = db.Box(
+                                x_center - cont_size//2, y - cont_size//2,
+                                x_center + cont_size//2, y + cont_size//2
+                            )
+                            array_cell.shapes(self.layers['Cont']).insert(cont_box)
+                            
+                            m1_box = cont_box.enlarged(m1_enc)
+                            array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                            contacts_added_inner += 1
+        
+        # Horizontal stripes of inner ring
+        for row in range(rows + 1):
+            y_center = row * geom['pitch_y'] + gr_width // 2
+            
+            for col_segment in range(cols + 1):
+                if col_segment == 0:
+                    x_start = 0
+                    x_end = geom['pitch_x'] - exclusion_radius
+                elif col_segment == cols:
+                    x_start = col_segment * geom['pitch_x'] + gr_width + exclusion_radius
+                    x_end = geom['total_width']
+                else:
+                    x_start = col_segment * geom['pitch_x'] + gr_width + exclusion_radius
+                    x_end = (col_segment + 1) * geom['pitch_x'] - exclusion_radius
+                
+                segment_length = x_end - x_start
+                if segment_length > cont_size:
+                    num_contacts = int((segment_length - cont_size) / cont_pitch) + 1
+                    
+                    if num_contacts > 1:
+                        actual_pitch = (segment_length - cont_size) / (num_contacts - 1)
+                    else:
+                        actual_pitch = 0
+                    
+                    for i in range(num_contacts):
+                        if num_contacts == 1:
+                            x = x_start + segment_length / 2
+                        else:
+                            x = x_start + cont_size/2 + i * actual_pitch
+                        
+                        if not is_near_intersection(x, y_center, inner_intersections):
+                            cont_box = db.Box(
+                                x - cont_size//2, y_center - cont_size//2,
+                                x + cont_size//2, y_center + cont_size//2
+                            )
+                            array_cell.shapes(self.layers['Cont']).insert(cont_box)
+                            
+                            m1_box = cont_box.enlarged(m1_enc)
+                            array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                            contacts_added_inner += 1
+        
+        # ========== OUTER RING CONTACTS (VSS - P-substrate) ==========
+        
+        # Outer ring corners (4 intersections)
+        outer_intersections = [
+            (-outer_offset + gr_width//2, -outer_offset + gr_width//2),  # Bottom-left
+            (geom['total_width'] + outer_offset - gr_width//2, -outer_offset + gr_width//2),  # Bottom-right
+            (-outer_offset + gr_width//2, geom['total_height'] + outer_offset - gr_width//2),  # Top-left
+            (geom['total_width'] + outer_offset - gr_width//2, geom['total_height'] + outer_offset - gr_width//2)  # Top-right
+        ]
+        
+        # Bottom edge of outer ring
+        y_center = -outer_offset + gr_width // 2
+        x_start = -outer_offset + gr_width + exclusion_radius
+        x_end = geom['total_width'] + outer_offset - gr_width - exclusion_radius
+        
+        segment_length = x_end - x_start
+        if segment_length > 0:
+            num_contacts = int((segment_length - cont_size) / cont_pitch) + 1
+            if num_contacts > 1:
+                actual_pitch = (segment_length - cont_size) / (num_contacts - 1)
+            else:
+                actual_pitch = 0
+            
+            for i in range(num_contacts):
+                if num_contacts == 1:
+                    x = x_start + segment_length / 2
+                else:
+                    x = x_start + cont_size/2 + i * actual_pitch
+                
+                cont_box = db.Box(
+                    x - cont_size//2, y_center - cont_size//2,
+                    x + cont_size//2, y_center + cont_size//2
                 )
+                array_cell.shapes(self.layers['Cont']).insert(cont_box)
+                
+                m1_box = cont_box.enlarged(m1_enc)
                 array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                contacts_added_outer += 1
         
-        print(f"✓ Created N-well contact guardring: {cols+1} x {rows+1} stripes")
-        print(f"  Layers used: NWell, Activ, nSD, Metal1")
-        print(f"  M1 pads at intersections for connectivity (no contacts)")
+        # Top edge of outer ring
+        y_center = geom['total_height'] + outer_offset - gr_width // 2
+        # Same x_start and x_end as bottom
         
-        # Now add contacts with improved spacing, avoiding intersections
-        self.enhance_guardring_with_bulk_connection(array_cell, geom, rows, cols)
+        if segment_length > 0:
+            num_contacts = int((segment_length - cont_size) / cont_pitch) + 1
+            if num_contacts > 1:
+                actual_pitch = (segment_length - cont_size) / (num_contacts - 1)
+            else:
+                actual_pitch = 0
+            
+            for i in range(num_contacts):
+                if num_contacts == 1:
+                    x = x_start + segment_length / 2
+                else:
+                    x = x_start + cont_size/2 + i * actual_pitch
+                
+                cont_box = db.Box(
+                    x - cont_size//2, y_center - cont_size//2,
+                    x + cont_size//2, y_center + cont_size//2
+                )
+                array_cell.shapes(self.layers['Cont']).insert(cont_box)
+                
+                m1_box = cont_box.enlarged(m1_enc)
+                array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                contacts_added_outer += 1
+        
+        # Left edge of outer ring
+        x_center = -outer_offset + gr_width // 2
+        y_start = -outer_offset + gr_width + exclusion_radius
+        y_end = geom['total_height'] + outer_offset - gr_width - exclusion_radius
+        
+        segment_length = y_end - y_start
+        if segment_length > 0:
+            num_contacts = int((segment_length - cont_size) / cont_pitch) + 1
+            if num_contacts > 1:
+                actual_pitch = (segment_length - cont_size) / (num_contacts - 1)
+            else:
+                actual_pitch = 0
+            
+            for i in range(num_contacts):
+                if num_contacts == 1:
+                    y = y_start + segment_length / 2
+                else:
+                    y = y_start + cont_size/2 + i * actual_pitch
+                
+                cont_box = db.Box(
+                    x_center - cont_size//2, y - cont_size//2,
+                    x_center + cont_size//2, y + cont_size//2
+                )
+                array_cell.shapes(self.layers['Cont']).insert(cont_box)
+                
+                m1_box = cont_box.enlarged(m1_enc)
+                array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                contacts_added_outer += 1
+        
+        # Right edge of outer ring
+        x_center = geom['total_width'] + outer_offset - gr_width // 2
+        # Same y_start and y_end as left edge
+        
+        if segment_length > 0:
+            num_contacts = int((segment_length - cont_size) / cont_pitch) + 1
+            if num_contacts > 1:
+                actual_pitch = (segment_length - cont_size) / (num_contacts - 1)
+            else:
+                actual_pitch = 0
+            
+            for i in range(num_contacts):
+                if num_contacts == 1:
+                    y = y_start + segment_length / 2
+                else:
+                    y = y_start + cont_size/2 + i * actual_pitch
+                
+                cont_box = db.Box(
+                    x_center - cont_size//2, y - cont_size//2,
+                    x_center + cont_size//2, y + cont_size//2
+                )
+                array_cell.shapes(self.layers['Cont']).insert(cont_box)
+                
+                m1_box = cont_box.enlarged(m1_enc)
+                array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                contacts_added_outer += 1
+        
+        # ========== BULK CONNECTIONS ==========
+        
+        # Inner ring VDD connection at top-right
+        inner_corner_x = cols * geom['pitch_x'] + gr_width // 2
+        inner_corner_y = rows * geom['pitch_y'] + gr_width // 2
+        self.add_bulk_connection_at_position(array_cell, inner_corner_x, inner_corner_y, "VBULK_PMOS")
+        
+        # Outer ring VSS connection at bottom-left
+        outer_corner_x = -outer_offset + gr_width // 2
+        outer_corner_y = -outer_offset + gr_width // 2
+        self.add_bulk_connection_at_position(array_cell, outer_corner_x, outer_corner_y, "VSS")
+        
+        print(f"    ✓ Added {contacts_added_inner} contacts to inner ring (VDD)")
+        print(f"    ✓ Added {contacts_added_outer} contacts to outer ring (VSS)")
+        print(f"    ✓ Excluded {len(inner_intersections)} inner + {len(outer_intersections)} outer intersections")
 
     def add_bulk_connection_corner(self, array_cell, geom, rows, cols):
         """
@@ -943,6 +1212,9 @@ class ScalableMismatchArray:
         
         # Create N-well guardring structure for PMOS
         self.create_shared_guardring_structure_pmos(array_cell, geom, total_rows, total_cols)
+
+        self.route_gate_connections_horizontal(array_cell, transistor_info, geom)
+        self.route_drain_source_connections_new_orientation(array_cell, transistor_info, geom)
         
         # Place transistors (same logic as NMOS)
         transistor_info = []
@@ -1127,7 +1399,7 @@ class ScalableMismatchArray:
         """
         Route gates HORIZONTALLY by rows with poly extension
         Poly extends 1.5μm ABOVE transistor -> Via Contact -> M3 horizontal bus
-        FIXED: For PMOS, find actual poly edge to avoid gap
+        For PMOS with dual guardring: extend beyond outer ring
         """
         print(f"\nRouting gate connections HORIZONTALLY by rows...")
         
@@ -1145,7 +1417,6 @@ class ScalableMismatchArray:
             print("  PMOS detected: Finding actual GatPoly edge...")
             poly_top = -float('inf')
             
-            # Scan all GatPoly shapes to find the actual top edge
             for shape in transistor_cell.shapes(self.layers['GatPoly']).each():
                 if shape.is_box():
                     box = shape.box
@@ -1153,15 +1424,13 @@ class ScalableMismatchArray:
                         poly_top = box.top
             
             if poly_top != -float('inf'):
-                # Calculate offset from bbox top to actual poly top
                 poly_top_offset = terminal_info['bbox_top'] - poly_top
                 print(f"    Found poly top offset: {poly_top_offset*self.layout.dbu:.3f}μm below bbox top")
             else:
-                # Fallback based on your observation
                 poly_top_offset = self.dbu(0.14)
                 print(f"    Using fallback offset: {poly_top_offset*self.layout.dbu:.3f}μm")
         
-        # Group transistors by ROW (not column)
+        # Group transistors by ROW
         rows = {}
         for t in transistor_info:
             if not t['is_dummy']:
@@ -1170,22 +1439,32 @@ class ScalableMismatchArray:
                     rows[row] = []
                 rows[row].append(t)
         
-        # Sort each row by column
         for row in rows:
             rows[row].sort(key=lambda t: t['active_col'])
         
-        # Find guard ring edges for horizontal extension
-        all_transistors = transistor_info
-        if all_transistors:
-            min_x_transistor = min(t['x'] for t in all_transistors)
-            max_x_transistor = max(t['x'] for t in all_transistors)
-            
-            # Guard ring edges in X direction
-            left_guard_edge = min_x_transistor - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
-            right_guard_edge = max_x_transistor + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+        # Determine guardring edges for horizontal extension
+        if geom and geom.get('has_outer_ring'):
+            # PMOS with dual guardring - use outer ring edges
+            outer_edge = geom['outer_ring_offset'] + geom['gr_width']
+            left_guard_edge = -outer_edge
+            right_guard_edge = geom['total_width'] + outer_edge
+            print(f"  Using dual guardring edges for PMOS gate routing")
+        else:
+            # NMOS or standard - calculate from transistor positions
+            all_transistors = transistor_info
+            if all_transistors:
+                min_x_transistor = min(t['x'] for t in all_transistors)
+                max_x_transistor = max(t['x'] for t in all_transistors)
+                left_guard_edge = min_x_transistor - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
+                right_guard_edge = max_x_transistor + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+            else:
+                left_guard_edge = 0
+                right_guard_edge = self.dbu(100)
         
         # Extension beyond guard ring
         extension_beyond = self.dbu(1.5)  # 1.5μm beyond guard ring edge
+        left_extension_x = left_guard_edge - extension_beyond
+        right_extension_x = right_guard_edge + extension_beyond
         
         routes_created = 0
         
@@ -1199,7 +1478,6 @@ class ScalableMismatchArray:
             print(f"  Row {row}: Connecting {len(row_transistors)} gates horizontally")
             
             # Y position for horizontal bus (above transistors)
-            # FIXED: Adjust for PMOS poly offset
             if self.device_type == 'pmos':
                 # For PMOS, start from actual poly top
                 bus_y = row_transistors[0]['y'] + terminal_info['bbox_height']/2 - poly_top_offset + poly_extension
@@ -1213,12 +1491,9 @@ class ScalableMismatchArray:
                 gate_y = t['y']  # Gate center
                 
                 # Extend poly upward from transistor top edge
-                # FIXED: Adjust starting point for PMOS
                 if self.device_type == 'pmos':
-                    # For PMOS, start from actual poly top
                     poly_top = t['y'] + terminal_info['bbox_height']/2 - poly_top_offset
                 else:
-                    # For NMOS, use bbox top (original)
                     poly_top = t['y'] + terminal_info['bbox_height']/2
                 
                 poly_extension_y = poly_top + poly_extension
@@ -1246,10 +1521,7 @@ class ScalableMismatchArray:
                     )
                     array_cell.shapes(self.layers['Metal3']).insert(v_box)
             
-            # Create horizontal M3 bus extending to both guard ring edges + 1.5μm
-            left_extension_x = left_guard_edge - extension_beyond
-            right_extension_x = right_guard_edge + extension_beyond
-            
+            # Create horizontal M3 bus extending to guard ring edges + extension
             h_bus_box = db.Box(
                 left_extension_x - m3_width//2,
                 bus_y - m3_width//2,
@@ -1265,11 +1537,11 @@ class ScalableMismatchArray:
             
             routes_created += 1
             
-            if self.device_type == 'pmos':
-                print(f"    Row {row}: Poly extends from actual edge (offset {poly_top_offset*self.layout.dbu:.3f}μm)")
+            if self.device_type == 'pmos' and geom and geom.get('has_outer_ring'):
+                print(f"    Row {row}: Extended to outer guardring + {extension_beyond*self.layout.dbu:.1f}μm")
         
         print(f"  Created {routes_created} horizontal gate routes")
-        return routes_created 
+        return routes_created    
     
     def create_gate_via_stack_at_position(self, cell, x, y):
         """Create via stack from Poly to M3 at specific position"""
@@ -1314,74 +1586,111 @@ class ScalableMismatchArray:
         )
         cell.shapes(self.layers['Metal3']).insert(m3_pad)    
 
-    def route_column_drains_tm1(self, array_cell, col_transistors, col):
-            """
-            Route drains VERTICALLY with TopMetal1
-            M1 bar: 2.32μm wide, vias stay at original position, M1 extends to cover them
-            """
+    def route_column_drains_tm1(self, array_cell, col_transistors, col, geom=None):
+        """
+        Route drains VERTICALLY with TopMetal1
+        For PMOS with dual guardring: extend beyond outer ring
+        """
+        
+        m1_bar_width = self.dbu(2.32)  # Width of M1 bar
+        tm1_width = self.dbu(TOPMETAL1_WIDTH)  # 2.0μm wide
+        m1_min_spacing = self.dbu(0.18)  # Minimum M1 spacing per DRC
+        
+        # Get terminal positions
+        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
+        terminal_info = self.analyze_transistor_terminals(transistor_cell)
+        
+        # Drain position
+        drain_x_offset = terminal_info['drain_center'] - terminal_info['transistor_center']
+        
+        # Original via position
+        bbox_half_height = terminal_info['bbox_height'] / 2
+        original_extension = self.dbu(0.85)
+        
+        print(f"    Column {col}: routing drains with M1 spacing check")
+        
+        drain_tm1_points = []
+        total_vias = 0
+        
+        # First pass: collect all drain positions to check spacing
+        drain_positions = []
+        for t in col_transistors:
+            drain_center_x = t['x'] + drain_x_offset
+            drain_positions.append({
+                'transistor': t,
+                'drain_x': drain_center_x,
+                'is_dummy': t.get('is_dummy', False)
+            })
+        
+        # Sort by Y position for checking adjacent transistors
+        drain_positions.sort(key=lambda d: d['transistor']['y'])
+        
+        # Process each transistor with spacing awareness
+        for i, drain_info in enumerate(drain_positions):
+            t = drain_info['transistor']
+            drain_center_x = drain_info['drain_x']
+            is_dummy = drain_info['is_dummy']
             
-            m1_bar_width = self.dbu(2.32)  # Width of M1 bar
-            tm1_width = self.dbu(TOPMETAL1_WIDTH)  # 2.0μm wide
+            # Check if this is a dummy with minimum dimensions
+            is_min_size_dummy = is_dummy and TRANSISTOR_W <= 1.1 and TRANSISTOR_L <= 0.4
             
-            # Get terminal positions
-            transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
-            transistor_cell = self.layout.cell(transistor_pcell)
-            terminal_info = self.analyze_transistor_terminals(transistor_cell)
+            # Adjust M1 bar width for minimum size dummies to avoid conflicts
+            if is_min_size_dummy:
+                adjusted_m1_width = self.dbu(1.8)  # Reduced from 2.32μm
+                drain_shift = self.dbu(0.2)  # Shift drain connection away
+            else:
+                adjusted_m1_width = m1_bar_width
+                drain_shift = 0
             
-            # Drain position
-            drain_x_offset = terminal_info['drain_center'] - terminal_info['transistor_center']
+            # M1 bar expands LEFT from drain center (with possible shift)
+            additional_shift = self.dbu(1.5)
+            m1_left_edge = drain_center_x - adjusted_m1_width - drain_shift - additional_shift
+            m1_right_edge = drain_center_x - drain_shift 
             
-            # Original via position (keep unchanged)
-            bbox_half_height = terminal_info['bbox_height'] / 2
-            original_extension = self.dbu(0.85)  # Original extension above transistor
+            # Via position
+            via_array_center_x = (m1_left_edge + m1_right_edge) / 2
+            via_top_y = t['y'] + bbox_half_height + original_extension
             
-            print(f"    Column {col}: routing drains with M1 bar (2.32μm wide)")
+            # Create vertical via array
+            num_vias = self.create_vertical_via_array_m1_to_tm1(
+                array_cell, 
+                via_array_center_x,
+                via_top_y,
+                adjusted_m1_width
+            )
             
-            drain_tm1_points = []
-            total_vias = 0
+            # Determine M1 extent to cover all vias
+            via_bottom_y = via_top_y - self.dbu(3 * 0.84)  # 3 vias * 0.84μm pitch
+            m1_enclosure = self.dbu(0.1)
             
-            for t in col_transistors:
-                # Original drain center position
-                drain_center_x = t['x'] + drain_x_offset
-                
-                # M1 bar expands LEFT from drain center
-                m1_left_edge = drain_center_x - m1_bar_width
-                m1_right_edge = drain_center_x
-                
-                # Via position (keep original)
-                via_array_center_x = drain_center_x - m1_bar_width/2
-                via_top_y = t['y'] + bbox_half_height + original_extension
-                
-                # Create vertical via array first
-                num_vias = self.create_vertical_via_array_m1_to_tm1(
-                    array_cell, 
-                    via_array_center_x,
-                    via_top_y,
-                    m1_bar_width
-                )
-                
-                # Now determine M1 extent to cover all vias with proper enclosure
-                # Vias extend downward from via_top_y
-                via_bottom_y = via_top_y - self.dbu(3 * 0.84)  # 3 vias * 0.84μm pitch
-                m1_enclosure = self.dbu(0.1)  # Enclosure around vias
-                
-                # Extend M1 to cover vias plus additional extensions requested
-                ext_top_y = via_top_y + self.dbu(0.3) + m1_enclosure
-                ext_bottom_y = min(t['y'], via_bottom_y - m1_enclosure)
-                
-                # Create M1 bar that covers all vias
-                m1_bar = db.Box(
-                    m1_left_edge,
-                    ext_bottom_y,
-                    m1_right_edge,
-                    ext_top_y
-                )
-                array_cell.shapes(self.layers['Metal1']).insert(m1_bar)
-                
-                total_vias += num_vias
-                drain_tm1_points.append((via_array_center_x, via_top_y))
+            ext_top_y = via_top_y - self.dbu(0.79) + m1_enclosure
+            ext_bottom_y = min(t['y'] - self.dbu(0.78), via_bottom_y - m1_enclosure)
             
-            # Create vertical TopMetal1 bus
+            # Create M1 bar
+            m1_bar = db.Box(
+                m1_left_edge,
+                ext_bottom_y,
+                m1_right_edge,
+                ext_top_y
+            )
+            array_cell.shapes(self.layers['Metal1']).insert(m1_bar)
+            
+            total_vias += num_vias
+            drain_tm1_points.append((via_array_center_x, via_top_y))
+            
+            if is_min_size_dummy:
+                print(f"      Adjusted M1 for min-size dummy at row {t.get('row', -1)}")
+        
+        # Determine vertical extension limits based on guardring type
+        if geom and geom.get('has_outer_ring'):
+            # PMOS with dual guardring - use outer ring edges
+            outer_edge = geom['outer_ring_offset'] + geom['gr_width']
+            bottom_guard_edge = -outer_edge
+            top_guard_edge = geom['total_height'] + outer_edge
+            print(f"      Using dual guardring for vertical TM1 extension")
+        else:
+            # Standard calculation from transistor positions
             all_transistors = [t for t in array_cell.parent_transistor_info] if hasattr(array_cell, 'parent_transistor_info') else col_transistors
             
             min_y_transistor = min(t['y'] for t in all_transistors)
@@ -1389,28 +1698,30 @@ class ScalableMismatchArray:
             
             bottom_guard_edge = min_y_transistor - terminal_info['bbox_height']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
             top_guard_edge = max_y_transistor + terminal_info['bbox_height']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+        
+        ext_length = self.dbu(1.5)
+        bottom_extension_y = bottom_guard_edge - ext_length
+        top_extension_y = top_guard_edge + ext_length
+        
+        # Create vertical TopMetal1 bus
+        if drain_tm1_points:
+            tm1_x = drain_tm1_points[0][0] if drain_tm1_points[0][0] else sum(p[0] for p in drain_tm1_points) / len(drain_tm1_points)
             
-            ext_length = self.dbu(1.5)
-            bottom_extension_y = bottom_guard_edge - ext_length
-            top_extension_y = top_guard_edge + ext_length
+            tm1_vertical = db.Box(
+                tm1_x - tm1_width//2,
+                bottom_extension_y,
+                tm1_x + tm1_width//2,
+                top_extension_y
+            )
+            array_cell.shapes(self.layers['TopMetal1']).insert(tm1_vertical)
             
-            if drain_tm1_points:
-                tm1_x = drain_tm1_points[0][0]
-                
-                tm1_vertical = db.Box(
-                    tm1_x - tm1_width//2,
-                    bottom_extension_y,
-                    tm1_x + tm1_width//2,
-                    top_extension_y
-                )
-                array_cell.shapes(self.layers['TopMetal1']).insert(tm1_vertical)
-                
-                label_text = f"D_COL{col}"
-                self.add_text(array_cell, tm1_x, bottom_extension_y, label_text)
-                self.add_text(array_cell, tm1_x, top_extension_y, label_text)
-                
-                print(f"      Created {total_vias} vias in vertical arrangement")
-
+            label_text = f"D_COL{col}"
+            self.add_text(array_cell, tm1_x, bottom_extension_y, label_text)
+            self.add_text(array_cell, tm1_x, top_extension_y, label_text)
+            
+            if geom and geom.get('has_outer_ring'):
+                print(f"      Extended TM1 beyond outer guardring: {bottom_extension_y*self.layout.dbu:.1f} to {top_extension_y*self.layout.dbu:.1f}μm")
+          
     def create_vertical_via_array_m1_to_tm1(self, cell, x_center, y_base, width_available):
         """
         Create VERTICAL array of vias from M1 to TopMetal1
@@ -1500,15 +1811,20 @@ class ScalableMismatchArray:
         )
         cell.shapes(self.layers['TopMetal1']).insert(tm1_pad)
 
-    def route_drain_source_connections_new_orientation(self, array_cell, transistor_info):
+    def route_drain_source_connections_new_orientation(self, array_cell, transistor_info, geom=None):
         """
         Route drains (VERTICAL by columns) and sources (HORIZONTAL by rows)
         Drains: TopMetal1 vertical buses
         Sources: TopMetal2 horizontal buses
+        For PMOS with dual guardring: routes extend beyond outer ring
         """
         print(f"\nRouting drain and source connections with new orientation...")
         print(f"  Drains: VERTICAL by columns (TopMetal1)")
         print(f"  Sources: HORIZONTAL by rows (TopMetal2)")
+        
+        # Check if we have dual guardring (PMOS case)
+        if geom and geom.get('has_outer_ring'):
+            print(f"  Dual guardring detected - routing will extend beyond outer ring")
         
         # Store transistor info for access by routing functions
         array_cell.parent_transistor_info = transistor_info
@@ -1526,12 +1842,12 @@ class ScalableMismatchArray:
         for col in columns:
             columns[col].sort(key=lambda t: t['active_row'])
         
-        # Route drains vertically by column
+        # Route drains vertically by column - pass geom parameter
         for col in sorted(columns.keys()):
             col_transistors = columns[col]
             if len(col_transistors) >= 1:
                 print(f"  Column {col}: Processing {len(col_transistors)} drains")
-                self.route_column_drains_tm1(array_cell, col_transistors, col)
+                self.route_column_drains_tm1(array_cell, col_transistors, col, geom)
         
         # GROUP BY ROWS for sources
         rows = {}
@@ -1546,120 +1862,125 @@ class ScalableMismatchArray:
         for row in rows:
             rows[row].sort(key=lambda t: t['active_col'])
         
-        # Route sources horizontally by row
+        # Route sources horizontally by row - pass geom parameter
         for row in sorted(rows.keys()):
             row_transistors = rows[row]
             if len(row_transistors) >= 1:
                 print(f"  Row {row}: Processing {len(row_transistors)} sources")
-                self.route_row_sources_tm2(array_cell, row_transistors, row)
+                self.route_row_sources_tm2(array_cell, row_transistors, row, geom)
         
         print(f"  ✓ Completed drain/source routing")
         print(f"    - {len(columns)} drain columns (TopMetal1)")
         print(f"    - {len(rows)} source rows (TopMetal2)")
+        
+        if geom and geom.get('has_outer_ring'):
+            outer_offset = geom.get('outer_ring_offset', 0)
+            total_extension = outer_offset + geom['gr_width'] + self.dbu(1.5)
+            print(f"    - Routes extended {total_extension*self.layout.dbu:.1f}μm beyond array center")
+        def route_row_drains_m4(self, array_cell, row_transistors, row):
+            """
+            Route drains: M1 extension from CENTER upward to 1µm OUTSIDE transistor
+            Extended horizontally to BOTH left and right guard ring edges + 1.5µm
+            FIXED: Corrected row numbering (KLayout row 0 = bottom = GUI row N-1)
+            """
+            
+            m1_width = self.dbu(METAL1_WIDTH)
+            m4_width = self.dbu(0.4)
+            
+            # Get terminal positions and bbox
+            transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+            transistor_cell = self.layout.cell(transistor_pcell)
+            terminal_info = self.analyze_transistor_terminals(transistor_cell)
+            
+            # Drain X position (left edge of drain M1)
+            drain_x_offset = terminal_info['drain_left_edge'] - terminal_info['transistor_center']
+            
+            # Extension parameters: from CENTER to 1µm OUTSIDE top edge
+            bbox_half_height = terminal_info['bbox_height'] / 2
+            extension_beyond = self.dbu(1)  # 1µm beyond transistor boundary
+            
+            # FIXED: Correct row number for labeling
+            actual_row_number = (ARRAY_SIZE - 1) - row
+            
+            print(f"    KLayout row {row} (GUI row {actual_row_number}): routing drains")
+            
+            drain_m4_points = []
+            
+            # Create M1 extensions and via stacks for each transistor
+            for i, t in enumerate(row_transistors):
+                # Drain X position
+                drain_x = t['x'] + drain_x_offset
+                
+                # Extension Y positions
+                ext_start_y = t['y']  # Start from transistor CENTER
+                ext_end_y = t['y'] + bbox_half_height + extension_beyond  # End 1µm above top edge
+                
+                # M1 vertical extension
+                m1_extension = db.Box(
+                    drain_x - m1_width//2,
+                    ext_start_y - m1_width//2,
+                    drain_x + m1_width//2,
+                    ext_end_y + m1_width//2
+                )
+                array_cell.shapes(self.layers['Metal1']).insert(m1_extension)
+                
+                # Via stack at end of extension
+                via_x = drain_x
+                via_y = ext_end_y
+                
+                # Create full via stack M1->M4
+                self.create_via_stack_m1_to_m4(array_cell, via_x, via_y)
+                
+                drain_m4_points.append((via_x, via_y))
+            
+            # Find actual array boundaries from all transistors in this row
+            # Get all transistors (including dummies) to find edges
+            all_row_transistors = [t for t in array_cell.parent_transistor_info 
+                                if t['row'] == row] if hasattr(array_cell, 'parent_transistor_info') else row_transistors
+            
+            # If we don't have parent info, estimate from current transistors
+            if not hasattr(array_cell, 'parent_transistor_info'):
+                # Find min and max X from transistors
+                min_x_transistor = min(t['x'] for t in row_transistors)
+                max_x_transistor = max(t['x'] for t in row_transistors)
+                
+                # Estimate guard ring positions
+                left_guard_edge = min_x_transistor - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
+                right_guard_edge = max_x_transistor + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+            else:
+                # Use actual positions
+                all_x = [t['x'] for t in all_row_transistors]
+                left_guard_edge = min(all_x) - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
+                right_guard_edge = max(all_x) + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+            
+            # Extension beyond guard rings
+            ext_length = self.dbu(1.5)  # 1.5µm beyond guard ring
+            left_extension_x = left_guard_edge - ext_length
+            right_extension_x = right_guard_edge + ext_length
+            
+            # Create full horizontal M4 bus from LEFT to RIGHT guard ring edges
+            if drain_m4_points:
+                m4_y = drain_m4_points[0][1]  # All at same Y
+                
+                # Full horizontal M4 bus extending BOTH directions
+                m4_horizontal = db.Box(
+                    left_extension_x - m4_width//2,
+                    m4_y - m4_width//2,
+                    right_extension_x + m4_width//2,
+                    m4_y + m4_width//2
+                )
+                array_cell.shapes(self.layers['Metal4']).insert(m4_horizontal)
+                
+                # Add label at left extension
+                self.add_text(array_cell, left_extension_x, m4_y, f"D_R{actual_row_number}")
+                
+                print(f"    Extended M4 drain bus from X={left_extension_x*self.layout.dbu:.3f}µm to X={right_extension_x*self.layout.dbu:.3f}µm")
 
-    def route_row_drains_m4(self, array_cell, row_transistors, row):
-        """
-        Route drains: M1 extension from CENTER upward to 1µm OUTSIDE transistor
-        Extended horizontally to BOTH left and right guard ring edges + 1.5µm
-        FIXED: Corrected row numbering (KLayout row 0 = bottom = GUI row N-1)
-        """
-        
-        m1_width = self.dbu(METAL1_WIDTH)
-        m4_width = self.dbu(0.4)
-        
-        # Get terminal positions and bbox
-        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
-        transistor_cell = self.layout.cell(transistor_pcell)
-        terminal_info = self.analyze_transistor_terminals(transistor_cell)
-        
-        # Drain X position (left edge of drain M1)
-        drain_x_offset = terminal_info['drain_left_edge'] - terminal_info['transistor_center']
-        
-        # Extension parameters: from CENTER to 1µm OUTSIDE top edge
-        bbox_half_height = terminal_info['bbox_height'] / 2
-        extension_beyond = self.dbu(1)  # 1µm beyond transistor boundary
-        
-        # FIXED: Correct row number for labeling
-        actual_row_number = (ARRAY_SIZE - 1) - row
-        
-        print(f"    KLayout row {row} (GUI row {actual_row_number}): routing drains")
-        
-        drain_m4_points = []
-        
-        # Create M1 extensions and via stacks for each transistor
-        for i, t in enumerate(row_transistors):
-            # Drain X position
-            drain_x = t['x'] + drain_x_offset
-            
-            # Extension Y positions
-            ext_start_y = t['y']  # Start from transistor CENTER
-            ext_end_y = t['y'] + bbox_half_height + extension_beyond  # End 1µm above top edge
-            
-            # M1 vertical extension
-            m1_extension = db.Box(
-                drain_x - m1_width//2,
-                ext_start_y - m1_width//2,
-                drain_x + m1_width//2,
-                ext_end_y + m1_width//2
-            )
-            array_cell.shapes(self.layers['Metal1']).insert(m1_extension)
-            
-            # Via stack at end of extension
-            via_x = drain_x
-            via_y = ext_end_y
-            
-            # Create full via stack M1->M4
-            self.create_via_stack_m1_to_m4(array_cell, via_x, via_y)
-            
-            drain_m4_points.append((via_x, via_y))
-        
-        # Find actual array boundaries from all transistors in this row
-        # Get all transistors (including dummies) to find edges
-        all_row_transistors = [t for t in array_cell.parent_transistor_info 
-                            if t['row'] == row] if hasattr(array_cell, 'parent_transistor_info') else row_transistors
-        
-        # If we don't have parent info, estimate from current transistors
-        if not hasattr(array_cell, 'parent_transistor_info'):
-            # Find min and max X from transistors
-            min_x_transistor = min(t['x'] for t in row_transistors)
-            max_x_transistor = max(t['x'] for t in row_transistors)
-            
-            # Estimate guard ring positions
-            left_guard_edge = min_x_transistor - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
-            right_guard_edge = max_x_transistor + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
-        else:
-            # Use actual positions
-            all_x = [t['x'] for t in all_row_transistors]
-            left_guard_edge = min(all_x) - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
-            right_guard_edge = max(all_x) + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
-        
-        # Extension beyond guard rings
-        ext_length = self.dbu(1.5)  # 1.5µm beyond guard ring
-        left_extension_x = left_guard_edge - ext_length
-        right_extension_x = right_guard_edge + ext_length
-        
-        # Create full horizontal M4 bus from LEFT to RIGHT guard ring edges
-        if drain_m4_points:
-            m4_y = drain_m4_points[0][1]  # All at same Y
-            
-            # Full horizontal M4 bus extending BOTH directions
-            m4_horizontal = db.Box(
-                left_extension_x - m4_width//2,
-                m4_y - m4_width//2,
-                right_extension_x + m4_width//2,
-                m4_y + m4_width//2
-            )
-            array_cell.shapes(self.layers['Metal4']).insert(m4_horizontal)
-            
-            # Add label at left extension
-            self.add_text(array_cell, left_extension_x, m4_y, f"D_R{actual_row_number}")
-            
-            print(f"    Extended M4 drain bus from X={left_extension_x*self.layout.dbu:.3f}µm to X={right_extension_x*self.layout.dbu:.3f}µm")
 
-    def route_row_sources_tm2(self, array_cell, row_transistors, row):
+    def route_row_sources_tm2(self, array_cell, row_transistors, row, geom=None):
         """
         Route sources HORIZONTALLY with TopMetal2
-        M1 bar: 2.32μm wide, vias stay at original position, M1 extends to cover them
+        For PMOS with dual guardring: extend beyond outer ring
         """
         
         m1_bar_width = self.dbu(2.32)  # Width of M1 bar
@@ -1705,7 +2026,6 @@ class ScalableMismatchArray:
             )
             
             # Now determine M1 extent to cover all vias with proper enclosure
-            # Vias extend upward from via_bottom_y
             via_top_y = via_bottom_y + self.dbu(2 * 1.96)  # 2 vias * 1.96μm pitch
             m1_enclosure = self.dbu(0.1)  # Enclosure around vias
             
@@ -1725,23 +2045,32 @@ class ScalableMismatchArray:
             total_vias += num_vias
             source_tm2_points.append((via_array_center_x, via_bottom_y))
         
-        # Create horizontal TopMetal2 bus
-        all_transistors = array_cell.parent_transistor_info if hasattr(array_cell, 'parent_transistor_info') else row_transistors
-        
-        if all_transistors:
-            min_x_transistor = min(t['x'] for t in all_transistors)
-            max_x_transistor = max(t['x'] for t in all_transistors)
-            
-            left_guard_edge = min_x_transistor - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
-            right_guard_edge = max_x_transistor + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+        # Determine horizontal extension limits based on guardring type
+        if geom and geom.get('has_outer_ring'):
+            # PMOS with dual guardring - use outer ring edges
+            outer_edge = geom['outer_ring_offset'] + geom['gr_width']
+            left_guard_edge = -outer_edge
+            right_guard_edge = geom['total_width'] + outer_edge
+            print(f"      Using dual guardring for horizontal TM2 extension")
         else:
-            left_guard_edge = 0
-            right_guard_edge = self.dbu(100)
+            # Standard calculation
+            all_transistors = array_cell.parent_transistor_info if hasattr(array_cell, 'parent_transistor_info') else row_transistors
+            
+            if all_transistors:
+                min_x_transistor = min(t['x'] for t in all_transistors)
+                max_x_transistor = max(t['x'] for t in all_transistors)
+                
+                left_guard_edge = min_x_transistor - terminal_info['bbox_width']/2 - self.dbu(GUARDRING_SPACING) - self.dbu(GUARDRING_WIDTH)
+                right_guard_edge = max_x_transistor + terminal_info['bbox_width']/2 + self.dbu(GUARDRING_SPACING) + self.dbu(GUARDRING_WIDTH)
+            else:
+                left_guard_edge = 0
+                right_guard_edge = self.dbu(100)
         
         ext_length = self.dbu(2.0)
         left_extension_x = left_guard_edge - ext_length
         right_extension_x = right_guard_edge + ext_length
         
+        # Create horizontal TopMetal2 bus
         if source_tm2_points:
             tm2_y = source_tm2_points[0][1]
             
@@ -1758,7 +2087,10 @@ class ScalableMismatchArray:
             self.add_text(array_cell, right_extension_x, tm2_y, label_text)
             
             print(f"      Created {total_vias} vias in vertical arrangement")
-                
+            
+            if geom and geom.get('has_outer_ring'):
+                print(f"      Extended TM2 beyond outer guardring: {left_extension_x*self.layout.dbu:.1f} to {right_extension_x*self.layout.dbu:.1f}μm")
+                            
     def create_vertical_via_array_m1_to_tm2(self, cell, x_center, y_base, width_available):
         """
         Create VERTICAL array of vias from M1 to TopMetal2
@@ -2224,13 +2556,14 @@ class ScalableMismatchArray:
         
         # Final report
         self.print_final_report()
-    
+
     def connect_dummies_to_vss(self, array_cell, transistor_info, geom):
         """
-        Short S/D/G terminals of each dummy transistor INTERNALLY only
-        NO connection between different dummies
+        Connect dummy transistors to VSS
+        NMOS: VSS through substrate guardring (correct)
+        PMOS: Need separate VSS rail (guardring is VDD!)
         """
-        print("\n  Shorting dummy transistor terminals (internal only)...")
+        print("\n  Connecting dummy transistors to VSS...")
         
         # Get transistor terminal positions
         transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
@@ -2241,89 +2574,247 @@ class ScalableMismatchArray:
         m2_width = self.dbu(METAL2_WIDTH)
         
         dummy_count = 0
+        is_min_size = TRANSISTOR_W <= 1.1 and TRANSISTOR_L <= 0.4
         
-        # Process each dummy independently - NO INTERCONNECTION
-        for t in transistor_info:
-            if t['is_dummy']:
-                dummy_count += 1
-                
-                trans_center_x = t['x']
-                trans_center_y = t['y']
-                
-                # Get terminal positions
-                drain_x = trans_center_x + (terminal_info['drain_center'] - terminal_info['transistor_center'])
-                source_x = trans_center_x + (terminal_info['source_center'] - terminal_info['transistor_center'])
-                gate_x = trans_center_x
-                
-                # M2 bar to short THIS dummy's terminals only
-                left_x = min(drain_x, source_x) - self.dbu(0.2)
-                right_x = max(drain_x, source_x) + self.dbu(0.2)
-                
-                m2_bar = db.Box(
-                    left_x, trans_center_y - m2_width//2,
-                    right_x, trans_center_y + m2_width//2
-                )
-                array_cell.shapes(self.layers['Metal2']).insert(m2_bar)
-                
-                # Via1 at drain
-                via1_box = db.Box(
-                    drain_x - self.dbu(VIA1_SIZE)//2,
-                    trans_center_y - self.dbu(VIA1_SIZE)//2,
-                    drain_x + self.dbu(VIA1_SIZE)//2,
-                    trans_center_y + self.dbu(VIA1_SIZE)//2
-                )
-                array_cell.shapes(self.layers['Via1']).insert(via1_box)
-                
-                # Via1 at source
-                via1_box = db.Box(
-                    source_x - self.dbu(VIA1_SIZE)//2,
-                    trans_center_y - self.dbu(VIA1_SIZE)//2,
-                    source_x + self.dbu(VIA1_SIZE)//2,
-                    trans_center_y + self.dbu(VIA1_SIZE)//2
-                )
-                array_cell.shapes(self.layers['Via1']).insert(via1_box)
-                
-                # Gate connection: small poly extension for contact
-                poly_ext_y = trans_center_y + self.dbu(0.3)
-                
-                poly_ext_box = db.Box(
-                    gate_x - self.dbu(POLY_WIDTH)//2,
-                    trans_center_y,
-                    gate_x + self.dbu(POLY_WIDTH)//2,
-                    poly_ext_y
-                )
-                array_cell.shapes(self.layers['GatPoly']).insert(poly_ext_box)
-                
-                # Contact at poly extension
-                cont_box = db.Box(
-                    gate_x - self.dbu(CONT_SIZE)//2,
-                    poly_ext_y - self.dbu(CONT_SIZE),
-                    gate_x + self.dbu(CONT_SIZE)//2,
-                    poly_ext_y
-                )
-                array_cell.shapes(self.layers['Cont']).insert(cont_box)
-                
-                # M1 connection
-                m1_box = db.Box(
-                    gate_x - m1_width//2,
-                    trans_center_y - m2_width//2,
-                    gate_x + m1_width//2,
-                    poly_ext_y
-                )
-                array_cell.shapes(self.layers['Metal1']).insert(m1_box)
-                
-                # Via1 at gate
-                via1_box = db.Box(
-                    gate_x - self.dbu(VIA1_SIZE)//2,
-                    trans_center_y - self.dbu(VIA1_SIZE)//2,
-                    gate_x + self.dbu(VIA1_SIZE)//2,
-                    trans_center_y + self.dbu(VIA1_SIZE)//2
-                )
-                array_cell.shapes(self.layers['Via1']).insert(via1_box)
+        # Collect all dummies
+        dummy_transistors = [t for t in transistor_info if t.get('is_dummy', False)]
         
-        print(f"    ✓ Shorted {dummy_count} dummy transistors (internal only, no interconnection)")
+        # Group dummies by column
+        dummy_columns = {}
+        for t in dummy_transistors:
+            col = t['col']
+            if col not in dummy_columns:
+                dummy_columns[col] = []
+            dummy_columns[col].append(t)
+        
+        # First: Create internal S/D/G shorting for each dummy
+        for t in dummy_transistors:
+            dummy_count += 1
+            trans_center_x = t['x']
+            trans_center_y = t['y']
+            
+            # Terminal positions
+            drain_x = trans_center_x + (terminal_info['drain_center'] - terminal_info['transistor_center'])
+            source_x = trans_center_x + (terminal_info['source_center'] - terminal_info['transistor_center'])
+            gate_x = trans_center_x
+            
+            # E-SHAPED CONNECTION for all dummies
+            bar_y = trans_center_y - self.dbu(0.4)
+            
+            # Main horizontal M1 bar
+            m1_horizontal_bar = db.Box(
+                drain_x - m1_width//2,
+                bar_y - m1_width//2,
+                source_x + m1_width//2,
+                bar_y + m1_width//2
+            )
+            array_cell.shapes(self.layers['Metal1']).insert(m1_horizontal_bar)
+            
+            # Vertical M1 stubs to D/S
+            m1_drain_stub = db.Box(
+                drain_x - m1_width//2,
+                bar_y - m1_width//2,
+                drain_x + m1_width//2,
+                trans_center_y + m1_width//2
+            )
+            array_cell.shapes(self.layers['Metal1']).insert(m1_drain_stub)
+            
+            m1_source_stub = db.Box(
+                source_x - m1_width//2,
+                bar_y - m1_width//2,
+                source_x + m1_width//2,
+                trans_center_y + m1_width//2
+            )
+            array_cell.shapes(self.layers['Metal1']).insert(m1_source_stub)
+            
+            # Gate connection to bar
+            poly_ext_y = bar_y
+            poly_ext_box = db.Box(
+                gate_x - self.dbu(POLY_WIDTH)//2,
+                poly_ext_y,
+                gate_x + self.dbu(POLY_WIDTH)//2,
+                trans_center_y - self.dbu(0.2)
+            )
+            array_cell.shapes(self.layers['GatPoly']).insert(poly_ext_box)
+            
+            cont_box = db.Box(
+                gate_x - self.dbu(CONT_SIZE)//2,
+                poly_ext_y - self.dbu(CONT_SIZE)//2,
+                gate_x + self.dbu(CONT_SIZE)//2,
+                poly_ext_y + self.dbu(CONT_SIZE)//2
+            )
+            array_cell.shapes(self.layers['Cont']).insert(cont_box)
+            
+            m1_gate_pad = cont_box.enlarged(self.dbu(0.06))
+            array_cell.shapes(self.layers['Metal1']).insert(m1_gate_pad)
+            
+            # Via1 at drain for M2 connection
+            via1_box = db.Box(
+                drain_x - self.dbu(VIA1_SIZE)//2,
+                bar_y - self.dbu(VIA1_SIZE)//2,
+                drain_x + self.dbu(VIA1_SIZE)//2,
+                bar_y + self.dbu(VIA1_SIZE)//2
+            )
+            array_cell.shapes(self.layers['Via1']).insert(via1_box)
+        
+        # Second: Route to VSS based on device type
+        if self.device_type == 'pmos':
+            # PMOS: Create separate VSS rail (guardring is VDD!)
+            self.create_vss_rail_for_pmos_dummies(array_cell, dummy_columns, geom)
+        else:
+            # NMOS: Route to guardring (which IS VSS)
+            self.route_dummies_to_guardring(array_cell, dummy_columns, geom)
+        
+        print(f"    ✓ Connected {dummy_count} dummy transistors to VSS")
+        if self.device_type == 'pmos':
+            print("    Note: PMOS dummies connected to dedicated VSS rail")
+        else:
+            print("    Note: NMOS dummies connected to substrate guardring (VSS)")
 
+    def route_dummies_to_guardring(self, array_cell, dummy_columns, geom):
+        """
+        Route NMOS dummies to substrate guardring (VSS)
+        FIXED: M2 bus positioned to the LEFT of dummies for ALL columns
+        """
+        m1_width = self.dbu(METAL1_WIDTH)
+        m2_width = self.dbu(METAL2_WIDTH)
+        via1_size = self.dbu(VIA1_SIZE)
+        
+        all_cols = sorted(dummy_columns.keys())
+        
+        for i, col in enumerate(all_cols):
+            col_dummies = dummy_columns[col]
+            if not col_dummies:
+                continue
+            
+            col_dummies.sort(key=lambda t: t['y'])
+            top_dummy = col_dummies[-1]
+            bottom_dummy = col_dummies[0]
+            
+            # FIXED: M2 bus ALWAYS goes to the LEFT of the dummy column
+            # Move 3.625μm to the left from dummy center for ALL columns
+            vss_x = bottom_dummy['x'] - self.dbu(3.7)
+            
+            # Guardring position
+            gr_y = geom['gr_width'] // 2
+            
+            # Vertical M2 bus
+            vss_bus = db.Box(
+                vss_x - m2_width//2,
+                gr_y - m2_width//2,
+                vss_x + m2_width//2,
+                top_dummy['y'] + self.dbu(1.0)
+            )
+            array_cell.shapes(self.layers['Metal2']).insert(vss_bus)
+            
+            # Get terminal info for drain position
+            transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+            transistor_cell = self.layout.cell(transistor_pcell)
+            terminal_info = self.analyze_transistor_terminals(transistor_cell)
+            drain_x_offset = terminal_info['drain_center'] - terminal_info['transistor_center']
+            
+            # Connect each dummy to the M2 bus
+            for dummy in col_dummies:
+                bar_y = dummy['y'] - self.dbu(0.4)  # E-shape bar position
+                drain_x = dummy['x'] + drain_x_offset
+                
+                # Horizontal M2 connection
+                m2_conn = db.Box(
+                    min(vss_x, drain_x) - m2_width//2,
+                    bar_y - m2_width//2,
+                    max(vss_x, drain_x) + m2_width//2,
+                    bar_y + m2_width//2
+                )
+                array_cell.shapes(self.layers['Metal2']).insert(m2_conn)
+            
+            # M1 pad at guardring connection point
+            m1_enc = self.dbu(0.06)
+            m1_pad = db.Box(
+                vss_x - m1_width//2 - m1_enc,
+                gr_y - m1_width//2 - m1_enc,
+                vss_x + m1_width//2 + m1_enc,
+                gr_y + m1_width//2 + m1_enc
+            )
+            array_cell.shapes(self.layers['Metal1']).insert(m1_pad)
+            
+            # Via1 to connect M2 to M1
+            via1_box = db.Box(
+                vss_x - via1_size//2,
+                gr_y - via1_size//2,
+                vss_x + via1_size//2,
+                gr_y + via1_size//2
+            )
+            array_cell.shapes(self.layers['Via1']).insert(via1_box)
 
+    def create_vss_rail_for_pmos_dummies(self, array_cell, dummy_columns, geom):
+        """
+        Create dedicated VSS rail for PMOS dummies
+        Cannot use N-well guardring (that's VDD!)
+        """
+        m2_width = self.dbu(METAL2_WIDTH)
+        m3_width = self.dbu(METAL3_WIDTH)
+        
+        # Create horizontal VSS rail at bottom with M3
+        vss_y = -self.dbu(5.0)  # 5μm below array
+        
+        # Calculate rail extent
+        leftmost = min(t['x'] for cols in dummy_columns.values() for t in cols)
+        rightmost = max(t['x'] for cols in dummy_columns.values() for t in cols)
+        
+        # M3 VSS rail
+        vss_rail = db.Box(
+            leftmost - self.dbu(2.0),
+            vss_y - m3_width//2,
+            rightmost + self.dbu(2.0),
+            vss_y + m3_width//2
+        )
+        array_cell.shapes(self.layers['Metal3']).insert(vss_rail)
+        
+        # Add label
+        self.add_text(array_cell, leftmost - self.dbu(2.0), vss_y, "VSS_DUMMY")
+        
+        # Connect each dummy column to VSS rail
+        for col, col_dummies in dummy_columns.items():
+            if not col_dummies:
+                continue
+            
+            col_dummies.sort(key=lambda t: t['y'])
+            bottom_dummy = col_dummies[0]
+            
+            # Route from dummy to VSS rail
+            # M2 vertical from dummy to below array
+            vss_x = bottom_dummy['x'] - self.dbu(1.0)
+            
+            m2_vertical = db.Box(
+                vss_x - m2_width//2,
+                vss_y,
+                vss_x + m2_width//2,
+                bottom_dummy['y'] - self.dbu(0.5)
+            )
+            array_cell.shapes(self.layers['Metal2']).insert(m2_vertical)
+            
+            # Via2 to connect M2 to M3 VSS rail
+            via2_box = db.Box(
+                vss_x - self.dbu(VIA2_SIZE)//2,
+                vss_y - self.dbu(VIA2_SIZE)//2,
+                vss_x + self.dbu(VIA2_SIZE)//2,
+                vss_y + self.dbu(VIA2_SIZE)//2
+            )
+            array_cell.shapes(self.layers['Via2']).insert(via2_box)
+            
+            # Connect dummies in column to M2 bus
+            for dummy in col_dummies:
+                bar_y = dummy['y'] - self.dbu(0.4)
+                drain_x = dummy['x'] + self.dbu(-0.36)
+                
+                # Horizontal M2 connection
+                m2_conn = db.Box(
+                    min(vss_x, drain_x) - m2_width//2,
+                    bar_y - m2_width//2,
+                    max(vss_x, drain_x) + m2_width//2,
+                    bar_y + m2_width//2
+                )
+                array_cell.shapes(self.layers['Metal2']).insert(m2_conn)                 
     def print_final_report(self):
         """Print final summary"""
         bbox = self.top_cell.bbox()

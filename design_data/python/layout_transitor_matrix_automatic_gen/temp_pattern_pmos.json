@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "array_rows": 3,
-    "array_cols": 3,
+    "array_rows": 2,
+    "array_cols": 2,
     "dummy_mode": "full",
     "device_type": "pmos",
     "transistor_W": 3.0,
