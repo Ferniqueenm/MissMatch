@@ -1,0 +1,10 @@
+{
+  "matrix_rows": 3,
+  "matrix_cols": 3,
+  "subarray_size": 4,
+  "device_type": "nmos",
+  "dummy_mode": "full",
+  "guardring_spacing": 4.0,
+  "w_values": [0.5, 1.0, 2.0],
+  "l_values": [0.35, 0.5, 1.0]
+}
