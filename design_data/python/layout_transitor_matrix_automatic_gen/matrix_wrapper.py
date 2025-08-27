@@ -295,29 +295,34 @@ class MatrixWrapper:
         # Step 2: Calculate positions with guardring overlap
         print("\nStep 2: Calculating positions with guardring overlap...")
         
-        # FIXED OVERLAP VALUE - ADJUST THIS AS NEEDED
-        overlap_um = 4.5  # μm - ADJUST THIS VALUE TO GET PERFECT OVERLAP
+        # FIXED OVERLAP VALUES - ADJUST THESE AS NEEDED
+        overlap_x_um = 4.5   # μm - Horizontal overlap (left/right) - WORKING VALUE
+        overlap_y_um = 13.5   # μm - Vertical overlap (top/bottom) - ADJUST THIS VALUE
         
-        overlap_dbu = int(overlap_um / self.layout.dbu)
-        print(f"  Using fixed overlap: {overlap_um}μm")
-        print(f"  (Edit line ~260 in the script to adjust this value)")
+        overlap_x_dbu = int(overlap_x_um / self.layout.dbu)
+        overlap_y_dbu = int(overlap_y_um / self.layout.dbu)
+        
+        print(f"  Using overlap values:")
+        print(f"    Horizontal (X): {overlap_x_um}μm")
+        print(f"    Vertical (Y): {overlap_y_um}μm")
+        print(f"  (Edit lines ~260-261 in the script to adjust these values)")
         
         # Initialize positions
         self.x_positions = [0]
         self.y_positions = [0]
         
-        # Calculate X positions
+        # Calculate X positions (using horizontal overlap)
         for col in range(1, self.matrix_cols):
             if (0, col-1) in self.array_bboxes:
                 prev_bbox = self.array_bboxes[(0, col-1)]
-                x_pos = self.x_positions[-1] + prev_bbox.width() - overlap_dbu
+                x_pos = self.x_positions[-1] + prev_bbox.width() - overlap_x_dbu
                 self.x_positions.append(x_pos)
         
-        # Calculate Y positions
+        # Calculate Y positions (using vertical overlap)
         for row in range(1, self.matrix_rows):
             if (row-1, 0) in self.array_bboxes:
                 prev_bbox = self.array_bboxes[(row-1, 0)]
-                y_pos = self.y_positions[-1] + prev_bbox.height() - overlap_dbu
+                y_pos = self.y_positions[-1] + prev_bbox.height() - overlap_y_dbu
                 self.y_positions.append(y_pos)
         
         # Step 3: Place arrays
@@ -379,7 +384,9 @@ class MatrixWrapper:
         print(f"Chip size: {bbox.width()*self.layout.dbu:.1f} x {bbox.height()*self.layout.dbu:.1f} μm")
         print(f"Total area: {area_um2:.0f} μm²")
         print("\nTo adjust guardring overlap:")
-        print("  Edit line ~260: overlap_um = 10.5  # Change this value")
+        print("  Edit lines ~260-261:")
+        print("    overlap_x_um = 4.5  # Horizontal (left/right)")
+        print("    overlap_y_um = 4.5  # Vertical (top/bottom)")
         print("="*70)
 
 
