@@ -1644,7 +1644,7 @@ class ScalableMismatchArray:
                 drain_shift = 0
             
             # M1 bar expands LEFT from drain center (with possible shift)
-            additional_shift = self.dbu(1.5)
+            additional_shift = self.dbu(1.6)
             m1_left_edge = drain_center_x - adjusted_m1_width - drain_shift - additional_shift
             m1_right_edge = drain_center_x - drain_shift 
             
@@ -1661,10 +1661,10 @@ class ScalableMismatchArray:
             )
             
             # Determine M1 extent to cover all vias
-            via_bottom_y = via_top_y - self.dbu(3 * 0.84)  # 3 vias * 0.84μm pitch
+            via_bottom_y = via_top_y - self.dbu(3 * 0.7)  # 3 vias * 0.84μm pitch
             m1_enclosure = self.dbu(0.1)
             
-            ext_top_y = via_top_y - self.dbu(0.79) + m1_enclosure
+            ext_top_y = via_top_y + m1_enclosure + self.dbu(0.2)
             ext_bottom_y = min(t['y'] - self.dbu(0.78), via_bottom_y - m1_enclosure)
             
             # Create M1 bar
