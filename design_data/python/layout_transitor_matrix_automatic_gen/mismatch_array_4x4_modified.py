@@ -538,22 +538,42 @@ class ScalableMismatchArray:
         self.add_bulk_connection_corner(array_cell, geom, rows, cols)
 
     def calculate_shared_guardring_array(self, transistor_bbox, rows, cols):
-        """Calculate dimensions for array with shared guardrings"""
+        """Calculate dimensions for array with shared guardrings
+        SIMPLIFIED: Use GatePoly bounds as reference"""
         
-        # Get actual transistor dimensions
-        actual_t_width = transistor_bbox.width() * self.layout.dbu
-        actual_t_height = transistor_bbox.height() * self.layout.dbu
+        # Create a temporary transistor to find GatePoly bounds
+        transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
+        transistor_cell = self.layout.cell(transistor_pcell)
         
-        print(f"\nActual transistor dimensions:")
-        print(f"  Width: {actual_t_width:.3f} µm")
-        print(f"  Height: {actual_t_height:.3f} µm")
+        # Find the bounding box of ALL GatePoly shapes
+        poly_left = float('inf')
+        poly_right = -float('inf')
+        poly_top = -float('inf')
+        poly_bottom = float('inf')
         
-        # Recalculate pitches with actual dimensions
-        pitch_x = self.dbu(actual_t_width + 2 * GUARDRING_SPACING + GUARDRING_WIDTH)
-        pitch_y = self.dbu(actual_t_height + 2 * GUARDRING_SPACING + GUARDRING_WIDTH)
+        for shape in transistor_cell.shapes(self.layers['GatPoly']).each():
+            if shape.is_box():
+                box = shape.box
+                poly_left = min(poly_left, box.left)
+                poly_right = max(poly_right, box.right)
+                poly_top = max(poly_top, box.top)
+                poly_bottom = min(poly_bottom, box.bottom)
         
-        print(f"  Final pitch X: {pitch_x * self.layout.dbu:.3f} µm")
-        print(f"  Final pitch Y: {pitch_y * self.layout.dbu:.3f} µm")
+        # Calculate GatePoly dimensions
+        gatepoly_width = (poly_right - poly_left) * self.layout.dbu
+        gatepoly_height = (poly_top - poly_bottom) * self.layout.dbu
+        
+        print(f"\nGatePoly dimensions:")
+        print(f"  Width: {gatepoly_width:.3f} μm")
+        print(f"  Height: {gatepoly_height:.3f} μm")
+        print(f"  (Using these as reference for guardring spacing)")
+        
+        # Calculate pitches based on GatePoly dimensions + guardring spacing
+        pitch_x = self.dbu(gatepoly_width + 2 * GUARDRING_SPACING + GUARDRING_WIDTH)
+        pitch_y = self.dbu(gatepoly_height + 2 * GUARDRING_SPACING + GUARDRING_WIDTH)
+        
+        print(f"  Pitch X: {pitch_x * self.layout.dbu:.3f} μm")
+        print(f"  Pitch Y: {pitch_y * self.layout.dbu:.3f} μm")
         
         gr_width = self.dbu(GUARDRING_WIDTH)
         gr_spacing = self.dbu(GUARDRING_SPACING)
@@ -573,7 +593,7 @@ class ScalableMismatchArray:
             'total_height': total_height,
             'cell_inner_width': cell_inner_width,
             'cell_inner_height': cell_inner_height,
-            't_width': transistor_bbox.width(),
+            't_width': transistor_bbox.width(),  # Keep original bbox for transistor placement
             't_height': transistor_bbox.height()
         }
     
@@ -2596,7 +2616,7 @@ class ScalableMismatchArray:
             # Terminal positions
             drain_x = trans_center_x + (terminal_info['drain_center'] - terminal_info['transistor_center'])
             source_x = trans_center_x + (terminal_info['source_center'] - terminal_info['transistor_center'])
-            gate_x = trans_center_x
+            gate_x = trans_center_x 
             
             # E-SHAPED CONNECTION for all dummies
             bar_y = trans_center_y - self.dbu(0.4)
@@ -2606,7 +2626,7 @@ class ScalableMismatchArray:
                 drain_x - m1_width//2,
                 bar_y - m1_width//2,
                 source_x + m1_width//2,
-                bar_y + m1_width//2
+                bar_y + m1_width//2 + self.dbu(0.2)
             )
             array_cell.shapes(self.layers['Metal1']).insert(m1_horizontal_bar)
             
@@ -2856,9 +2876,9 @@ def main():
     
     # Get pattern file name for output naming
     pattern_file = 'default'
-    if '$pattern_file' in globals():
+    if 'pattern_file' in globals():
         import os
-        pattern_file = os.path.splitext(os.path.basename(globals()['$pattern_file']))[0]
+        pattern_file = os.path.splitext(os.path.basename(globals()['pattern_file']))[0]
     
     # Output file with appropriate name
     try:
