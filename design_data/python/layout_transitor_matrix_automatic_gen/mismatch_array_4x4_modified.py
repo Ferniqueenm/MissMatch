@@ -2618,7 +2618,7 @@ class ScalableMismatchArray:
             gate_x = trans_center_x 
             
             # E-SHAPED CONNECTION for all dummies
-            bar_y = trans_center_y - self.dbu(0.4)
+            bar_y = trans_center_y - self.dbu(1.5)
             
             # Main horizontal M1 bar
             m1_horizontal_bar = db.Box(
@@ -2669,11 +2669,13 @@ class ScalableMismatchArray:
             
             # Via1 at drain for M2 connection
             via1_box = db.Box(
-                drain_x - self.dbu(VIA1_SIZE)//2,
-                bar_y - self.dbu(VIA1_SIZE)//2,
+                drain_x - self.dbu(VIA1_SIZE)//2 ,
+                self.dbu(1.35-0.12) + bar_y - self.dbu(VIA1_SIZE)//2,
                 drain_x + self.dbu(VIA1_SIZE)//2,
-                bar_y + self.dbu(VIA1_SIZE)//2
+                self.dbu(0.85)+ bar_y + self.dbu(VIA1_SIZE)//2
             )
+
+            via1_gate_pad = cont_box.enlarged(self.dbu(0))
             array_cell.shapes(self.layers['Via1']).insert(via1_box)
         
         # Second: Route to VSS based on device type
