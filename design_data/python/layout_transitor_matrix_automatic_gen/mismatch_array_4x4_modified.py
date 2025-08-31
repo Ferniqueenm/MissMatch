@@ -1664,7 +1664,7 @@ class ScalableMismatchArray:
                 drain_shift = 0
             
             # M1 bar expands LEFT from drain center (with possible shift)
-            additional_shift = self.dbu(1.6)
+            additional_shift = self.dbu(1.4)
             m1_left_edge = drain_center_x - adjusted_m1_width - drain_shift - additional_shift
             m1_right_edge = drain_center_x - drain_shift 
             
@@ -1995,7 +1995,6 @@ class ScalableMismatchArray:
                 self.add_text(array_cell, left_extension_x, m4_y, f"D_R{actual_row_number}")
                 
                 print(f"    Extended M4 drain bus from X={left_extension_x*self.layout.dbu:.3f}µm to X={right_extension_x*self.layout.dbu:.3f}µm")
-
 
     def route_row_sources_tm2(self, array_cell, row_transistors, row, geom=None):
         """
@@ -2835,6 +2834,7 @@ class ScalableMismatchArray:
                     bar_y + m2_width//2
                 )
                 array_cell.shapes(self.layers['Metal2']).insert(m2_conn)                 
+    
     def print_final_report(self):
         """Print final summary"""
         bbox = self.top_cell.bbox()

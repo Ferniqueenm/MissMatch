@@ -140,7 +140,7 @@ class MatrixWrapper:
         Returns the GDS file path
         """
         # First check if there's a default pattern file that might interfere
-        default_patterns = ['temp_pattern_nmos.json', 'temp_pattern_pmos.json']
+        default_patterns = ['temp_pattern.json']
         for default in default_patterns:
             if os.path.exists(default):
                 print(f"    WARNING: Found default pattern file {default}, removing it")
