@@ -37,7 +37,7 @@ CONT_SIZE = 0.22
 CONT_SPACING = 0.40
 PAD_SIZE = 50.0
 
-TOPMETAL1_WIDTH = 2    
+TOPMETAL1_WIDTH = 1.65
 TOPMETAL2_WIDTH = 2.00    
 TOPVIA1_SIZE = 0.42       
 TOPVIA2_SIZE = 0.90       
@@ -2624,7 +2624,7 @@ class ScalableMismatchArray:
             # Main horizontal M1 bar
             m1_horizontal_bar = db.Box(
                 drain_x - m1_width//2,
-                bar_y - m1_width//2,
+                bar_y - m1_width//2 - self.dbu(0.1),
                 source_x + m1_width//2,
                 bar_y + m1_width//2 + self.dbu(0.2)
             )
