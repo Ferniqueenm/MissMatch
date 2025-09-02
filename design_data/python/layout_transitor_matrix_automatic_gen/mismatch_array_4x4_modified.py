@@ -2697,7 +2697,7 @@ class ScalableMismatchArray:
         Route NMOS dummies to substrate guardring (VSS)
         FIXED: M2 bus positioned to the LEFT of dummies for ALL columns
         """
-        m1_width = self.dbu(METAL1_WIDTH)
+        m1_width = self.dbu(0.2)
         m2_width = self.dbu(METAL2_WIDTH)
         via1_size = self.dbu(VIA1_SIZE)
         
