@@ -6,7 +6,7 @@
     "device_type": "nmos",
     "transistor_W": 2.4,
     "transistor_L": 0.13,
-    "guardring_spacing": 5.0
+    "guardring_spacing": 3.0
   },
   "pattern_data": {}
 }
