@@ -432,10 +432,10 @@ class MatrixWrapper:
         self.add_global_routing_labels()
         
         # Clean up temp files
-        # print("\nStep 6: Cleaning up...")
-        # for temp_file in temp_files:
-        #     if os.path.exists(temp_file):
-        #         os.unlink(temp_file)
+        print("\nStep 6: Cleaning up...")
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)
         
         # Clean up pattern files
         import glob
