@@ -1,0 +1,18 @@
+** sch_path: /home/designer/shared/verification/simulations/ihp-sg13g2/MissMatch/design_data/xschem/Gate_Line.sch
+.subckt Gate_Line ctrl_n ctrl_p Vcl Gdrive Ssense Sforce 1.2V Vss Source Gate
+*.PININFO Gate:B Vss:B Gdrive:B ctrl_p:I 1.2V:B Vcl:B Ssense:B Source:B Sforce:B ctrl_n:I
+M1 Gate ctrl_n Gdrive net5 sg13_lv_pmos w=0.15u l=0.13u ng=1 m=1
+M2 Gdrive ctrl_p Gate net1 sg13_lv_nmos w=0.15u l=0.13u ng=1 m=1
+M3 Vcl ctrl_n Gate net2 sg13_lv_nmos w=0.15u l=0.13u ng=1 m=1
+M4 Source ctrl_n Ssense net3 sg13_lv_pmos w=0.30u l=0.13u ng=1 m=1
+M5 Ssense ctrl_p Source net4 sg13_lv_nmos w=0.15u l=0.13u ng=1 m=1
+M6 Source ctrl_n Sforce net7 sg13_lv_pmos w=10u l=0.13u ng=1 m=1
+M7 Sforce ctrl_p Source net6 sg13_lv_nmos w=10u l=0.13u ng=1 m=1
+R1 Vss net1 ptap1 A=6.084e-13 P=3.12e-06
+R2 1.2V net5 ntap1 A=6.084e-13 P=3.12e-06
+R3 Vss net2 ptap1 A=6.084e-13 P=3.12e-06
+R4 Vss net4 ptap1 A=6.084e-13 P=3.12e-06
+R5 1.2V net3 ntap1 A=6.084e-13 P=3.12e-06
+R6 Vss net6 ptap1 A=7.8e-12 P=2.156e-05
+R7 1.2V net7 ntap1 A=7.8e-12 P=2.156e-05
+.ends
