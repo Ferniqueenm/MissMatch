@@ -46,7 +46,7 @@ class MatrixWrapper:
         self.layout.dbu = 0.001  # 1nm
         
         # Create top cell
-        cell_name = f"Matrix_{self.matrix_rows}x{self.matrix_cols}_Array{self.subarray_size}x{self.subarray_size}"
+        cell_name = "MissMatchDut"
         self.top_cell = self.layout.create_cell(cell_name)
         
         # Layer mapping
@@ -453,8 +453,8 @@ class MatrixWrapper:
         boundary_right = int(boundary_upper_right_x_um / self.layout.dbu)
         boundary_top = int(boundary_upper_right_y_um / self.layout.dbu)
 
-        # Add Activ boundary layer (1, 4) as outer frame
-        boundary_layer = self.layout.layer(1, 4)  # Activ boundary
+        # Add prBoundary layer (189, 0) as outer frame
+        boundary_layer = self.layout.layer(189, 0)  # prBoundary
         boundary_box = db.Box(boundary_left, boundary_bottom, boundary_right, boundary_top)
         self.top_cell.shapes(boundary_layer).insert(boundary_box)
 
@@ -589,18 +589,18 @@ def main():
     # Check if running in KLayout with -rd parameters
     if 'config_file' in globals():
         config_file = globals()['config_file']
-        output_file = globals().get('output', 'matrix_output.gds')
+        output_file = 'MissMatchDut.gds'  # Always use fixed name
     else:
         # Standalone Python mode
         import argparse
         
         parser = argparse.ArgumentParser(description='Generate matrix of mismatch arrays')
         parser.add_argument('config', help='JSON configuration file')
-        parser.add_argument('-o', '--output', default='matrix_output.gds', help='Output GDS file')
+        parser.add_argument('-o', '--output', default='MissMatchDut.gds', help='Output GDS file (ignored, always MissMatchDut.gds)')
         
         args = parser.parse_args()
         config_file = args.config
-        output_file = args.output
+        output_file = 'MissMatchDut.gds'  # Always use fixed name
     
     # Check config file exists
     if not os.path.exists(config_file):
@@ -617,7 +617,7 @@ def main():
     wrapper.generate_matrix(output_file)
     
     print(f"\nTo view:")
-    print(f"  klayout {output_file}")
+    print(f"  klayout MissMatchDut.gds")
 
 
 if __name__ == "__main__":
