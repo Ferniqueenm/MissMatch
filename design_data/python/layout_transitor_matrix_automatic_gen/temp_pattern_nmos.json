@@ -4,9 +4,9 @@
     "array_cols": 2,
     "dummy_mode": "full",
     "device_type": "nmos",
-    "transistor_W": 2.4,
-    "transistor_L": 0.13,
-    "guardring_spacing": 5.0
+    "transistor_W": 2.40,
+    "transistor_L": 2.08,
+    "guardring_spacing": 3
   },
   "pattern_data": {}
 }

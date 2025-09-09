@@ -215,7 +215,7 @@ class MatrixWrapper:
                     if os.path.exists(unique_output):
                         os.unlink(unique_output)
                     os.rename(actual_output, unique_output)
-                    print(f"    ” Generated: {unique_output} ({file_size} bytes)")
+                    print(f"Generated: {unique_output} ({file_size} bytes)")
                     return unique_output
                 else:
                     print(f"    ERROR: Generated file is empty")
@@ -349,10 +349,10 @@ class MatrixWrapper:
                     self.array_cells[(row, col)] = array_cell
                     self.array_bboxes[(row, col)] = bbox
                     
-                    print(f"    ” Imported Matrix #{matrix_num}: {bbox.width()*0.001:.1f} x {bbox.height()*0.001:.1f}um")
-                    print(f"      W={w}um, L={l}um, bbox=({bbox.width()*self.layout.dbu:.3f} x {bbox.height()*self.layout.dbu:.3f})um")
+                    print(f"Imported Matrix #{matrix_num}: {bbox.width()*0.001:.1f} x {bbox.height()*0.001:.1f}um")
+                    print(f"W={w}um, L={l}um, bbox=({bbox.width()*self.layout.dbu:.3f} x {bbox.height()*self.layout.dbu:.3f})um")
                 else:
-                    print(f"    Failed to generate Matrix #{matrix_num} [{row},{col}]")
+                    print(f"Failed to generate Matrix #{matrix_num} [{row},{col}]")
         
         if not self.array_cells:
             print("ERROR: No arrays were generated successfully!")
@@ -431,8 +431,71 @@ class MatrixWrapper:
         print("\nStep 5: Adding global routing labels...")
         self.add_global_routing_labels()
         
+
+        # Step 7: Add boundary frame and macro name
+        print("\nStep 7: Adding boundary frame and macro name...")
+
+        # Exact boundary specifications in µm
+        boundary_width_um = 1022.74000
+        boundary_height_um = 1064.59500
+        boundary_center_x_um = 508.99500
+        boundary_center_y_um = 530.80250
+
+        # Alternative: use corner coordinates directly
+        boundary_lower_left_x_um = -2.37500
+        boundary_lower_left_y_um = -1.49500
+        boundary_upper_right_x_um = 1020.36500
+        boundary_upper_right_y_um = 1063.10000
+
+        # Convert to database units
+        boundary_left = int(boundary_lower_left_x_um / self.layout.dbu)
+        boundary_bottom = int(boundary_lower_left_y_um / self.layout.dbu)
+        boundary_right = int(boundary_upper_right_x_um / self.layout.dbu)
+        boundary_top = int(boundary_upper_right_y_um / self.layout.dbu)
+
+        # Add Activ boundary layer (1, 4) as outer frame
+        boundary_layer = self.layout.layer(1, 4)  # Activ boundary
+        boundary_box = db.Box(boundary_left, boundary_bottom, boundary_right, boundary_top)
+        self.top_cell.shapes(boundary_layer).insert(boundary_box)
+
+        # Calculate actual center for verification
+        actual_center_x = (boundary_left + boundary_right) / 2
+        actual_center_y = (boundary_bottom + boundary_top) / 2
+        actual_width = (boundary_right - boundary_left) * self.layout.dbu
+        actual_height = (boundary_top - boundary_bottom) * self.layout.dbu
+
+        # Add macro name text at the center top of the boundary
+        macro_name = self.top_cell.name
+        text_x = int(boundary_center_x_um / self.layout.dbu)
+        text_y = boundary_top + int(5 / self.layout.dbu)  # 5µm above the boundary
+        text_obj = db.Text(macro_name, db.Trans(db.Point(text_x, text_y)))
+        self.top_cell.shapes(self.layers['TEXT']).insert(text_obj)
+
+        print(f"  ✓ Added Activ boundary frame:")
+        print(f"    Lower left: ({boundary_lower_left_x_um:.5f}, {boundary_lower_left_y_um:.5f}) µm")
+        print(f"    Upper right: ({boundary_upper_right_x_um:.5f}, {boundary_upper_right_y_um:.5f}) µm")
+        print(f"    Size: {actual_width:.5f} x {actual_height:.5f} µm")
+        print(f"    Center: ({actual_center_x*self.layout.dbu:.5f}, {actual_center_y*self.layout.dbu:.5f}) µm")
+        print(f"  ✓ Added macro name: {macro_name}")
+
+        # Verify the actual design position relative to boundary
+        design_bbox = self.top_cell.bbox()
+        design_width = design_bbox.width() * self.layout.dbu
+        design_height = design_bbox.height() * self.layout.dbu
+        design_left = design_bbox.left * self.layout.dbu
+        design_bottom = design_bbox.bottom * self.layout.dbu
+
+        print(f"\n  Design info:")
+        print(f"    Size: {design_width:.1f} x {design_height:.1f} µm")
+        print(f"    Lower left: ({design_left:.1f}, {design_bottom:.1f}) µm")
+
+        # Check if design fits within boundary
+        if design_bbox.left < boundary_left or design_bbox.right > boundary_right or \
+        design_bbox.bottom < boundary_bottom or design_bbox.top > boundary_top:
+            print(f"  ⚠ WARNING: Design extends outside boundary!")
+
         # Clean up temp files
-        print("\nStep 6: Cleaning up...")
+        print("\nStep 8: Cleaning up...")
         for temp_file in temp_files:
             if os.path.exists(temp_file):
                 os.unlink(temp_file)
@@ -500,7 +563,7 @@ class MatrixWrapper:
             actual_size = self.subarray_size + 2
             print(f"  With full dummy ring: {actual_size}x{actual_size} total")
         print(f"Chip size: {bbox.width()*self.layout.dbu:.1f} x {bbox.height()*self.layout.dbu:.1f} um")
-        print(f"Total area: {area_um2:.0f} umÂ²")
+        print(f"Total area: {area_um2:.0f}")
         print(f"\nTotal transistors:")
         print(f"  Active: {25 * self.subarray_size * self.subarray_size}")
         if self.dummy_mode == "full":

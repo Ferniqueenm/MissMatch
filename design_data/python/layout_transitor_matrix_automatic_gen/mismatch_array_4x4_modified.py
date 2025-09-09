@@ -1188,8 +1188,8 @@ class ScalableMismatchArray:
         
         print(f"✓ Placed {active_count} active + {dummy_count} dummy transistors")
 
-        if dummy_count > 0:
-            self.connect_dummies_to_vss(array_cell, transistor_info, geom)
+        # if dummy_count > 0:
+        #     self.connect_dummies_to_vss(array_cell, transistor_info, geom)
         
         if dummy_mode == 'full':
             print(f"Full dummy ring: top/bottom/left/right borders")
@@ -1302,8 +1302,8 @@ class ScalableMismatchArray:
         
         print(f"✓ Placed {active_count} active + {dummy_count} dummy PMOS transistors")
 
-        if dummy_count > 0:
-            self.connect_dummies_to_vss(array_cell, transistor_info, geom)
+        # if dummy_count > 0:
+        #     self.connect_dummies_to_vss(array_cell, transistor_info, geom)
         
         if dummy_mode == 'full':
             print(f"Full dummy ring: top/bottom/left/right borders")
@@ -1664,7 +1664,7 @@ class ScalableMismatchArray:
                 drain_shift = 0
             
             # M1 bar expands LEFT from drain center (with possible shift)
-            additional_shift = self.dbu(1.4)
+            additional_shift = self.dbu(0.9)
             m1_left_edge = drain_center_x - adjusted_m1_width - drain_shift - additional_shift
             m1_right_edge = drain_center_x - drain_shift 
             
@@ -1676,7 +1676,7 @@ class ScalableMismatchArray:
             num_vias = self.create_vertical_via_array_m1_to_tm1(
                 array_cell, 
                 via_array_center_x,
-                via_top_y,
+                via_top_y - self.dbu(1),
                 adjusted_m1_width
             )
             
@@ -1689,10 +1689,10 @@ class ScalableMismatchArray:
             
             # Create M1 bar
             m1_bar = db.Box(
-                m1_left_edge,
-                ext_bottom_y,
+                m1_left_edge + self.dbu(1.2),
+                ext_bottom_y - self.dbu(1),
                 m1_right_edge,
-                ext_top_y
+                ext_top_y - self.dbu(0.78)
             )
             array_cell.shapes(self.layers['Metal1']).insert(m1_bar)
             
@@ -2040,7 +2040,7 @@ class ScalableMismatchArray:
             num_vias = self.create_vertical_via_array_m1_to_tm2(
                 array_cell,
                 via_array_center_x,
-                via_bottom_y,
+                via_bottom_y + self.dbu(0.5),
                 m1_bar_width
             )
             
@@ -2055,9 +2055,9 @@ class ScalableMismatchArray:
             # Create M1 bar that covers all vias
             m1_bar = db.Box(
                 m1_left_edge,
-                ext_bottom_y,
+                ext_bottom_y + self.dbu(1),
                 m1_right_edge,
-                ext_top_y
+                ext_top_y + self.dbu(0.5)
             )
             array_cell.shapes(self.layers['Metal1']).insert(m1_bar)
             
