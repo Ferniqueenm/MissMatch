@@ -477,8 +477,8 @@ class ScalableMismatchArray:
                             array_cell.shapes(self.layers['Cont']).insert(cont_box)
                             
                             # M1 with enclosure
-                            m1_box = cont_box.enlarged(m1_enc)
-                            array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                            # m1_box = cont_box.enlarged(m1_enc)
+                            # array_cell.shapes(self.layers['Metal1']).insert(m1_box)
                             contacts_added += 1
         
         # HORIZONTAL STRIPES - contacts along horizontal lines, avoiding intersections
@@ -527,8 +527,8 @@ class ScalableMismatchArray:
                             array_cell.shapes(self.layers['Cont']).insert(cont_box)
                             
                             # M1 with enclosure
-                            m1_box = cont_box.enlarged(m1_enc)
-                            array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                            # m1_box = cont_box.enlarged(m1_enc)
+                            # array_cell.shapes(self.layers['Metal1']).insert(m1_box)
                             contacts_added += 1
         
         print(f"    ✓ Added {contacts_added} contacts (no intersections)")
@@ -622,6 +622,9 @@ class ScalableMismatchArray:
             
             # P+ implant for substrate contact (pSD layer)
             array_cell.shapes(self.layers['pSD']).insert(stripe_box)
+
+            # Metal1 overlay on pSD 
+            array_cell.shapes(self.layers['Metal1']).insert(stripe_box)
         
         # Create horizontal guardring stripes
         for row in range(rows + 1):
@@ -636,24 +639,27 @@ class ScalableMismatchArray:
             
             # P+ implant for substrate contact
             array_cell.shapes(self.layers['pSD']).insert(stripe_box)
+
+            # Metal1 overlay on pSD 
+            array_cell.shapes(self.layers['Metal1']).insert(stripe_box)
         
         # Add Metal1 at intersections for connectivity (but NO contacts)
-        m1_size = self.dbu(0.4)  # Larger M1 pad at intersections
+        # m1_size = self.dbu(0.4)  # Larger M1 pad at intersections
         
-        for row in range(rows + 1):
-            for col in range(cols + 1):
-                # Center of guardring intersection
-                x_center = col * geom['pitch_x'] + gr_width // 2
-                y_center = row * geom['pitch_y'] + gr_width // 2
+        # for row in range(rows + 1):
+        #     for col in range(cols + 1):
+        #         # Center of guardring intersection
+        #         x_center = col * geom['pitch_x'] + gr_width // 2
+        #         y_center = row * geom['pitch_y'] + gr_width // 2
                 
-                # Metal1 pad at intersection (NO Contact underneath)
-                m1_box = db.Box(
-                    x_center - m1_size//2,
-                    y_center - m1_size//2,
-                    x_center + m1_size//2,
-                    y_center + m1_size//2
-                )
-                array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+        #         # Metal1 pad at intersection (NO Contact underneath)
+        #         m1_box = db.Box(
+        #             x_center - m1_size//2,
+        #             y_center - m1_size//2,
+        #             x_center + m1_size//2,
+        #             y_center + m1_size//2
+        #         )
+        #         array_cell.shapes(self.layers['Metal1']).insert(m1_box)
         
         print(f"✓ Created substrate contact guardring: {cols+1} x {rows+1} stripes")
         print(f"  Layers used: Activ, pSD, Metal1")
@@ -691,6 +697,7 @@ class ScalableMismatchArray:
             )
             array_cell.shapes(self.layers['Activ']).insert(stripe_box)
             array_cell.shapes(self.layers['nSD']).insert(stripe_box)
+            array_cell.shapes(self.layers['Metal1']).insert(stripe_box)
         
         for row in range(rows + 1):
             y = row * geom['pitch_y']
@@ -700,6 +707,7 @@ class ScalableMismatchArray:
             )
             array_cell.shapes(self.layers['Activ']).insert(stripe_box)
             array_cell.shapes(self.layers['nSD']).insert(stripe_box)
+            array_cell.shapes(self.layers['Metal1']).insert(stripe_box)
         
         # OUTER RING: P-substrate contact (VSS) - New guardring
         outer_spacing = self.dbu(1.0)  # Space between rings
