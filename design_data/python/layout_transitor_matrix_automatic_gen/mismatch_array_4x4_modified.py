@@ -625,7 +625,7 @@ class ScalableMismatchArray:
         print("\nCreating shared guardring structure for NMOS (IHP-compliant)...")
         
         gr_width = geom['gr_width']
-        psd_extension = self.dbu(0.03)  # 0.03µm extension on each side
+        psd_extension = self.dbu(0.04)  # 0.03µm extension on each side
         
         # For NMOS array: p-type substrate contact
         # Based on IHP script: uses pSD + Activ (NO Ptap!)
@@ -647,7 +647,7 @@ class ScalableMismatchArray:
             )
             
             # Active area - same as pSD (wider)
-            array_cell.shapes(self.layers['Activ']).insert(psd_box)
+            array_cell.shapes(self.layers['Activ']).insert(m1_box)
             
             # P+ implant for substrate contact (pSD layer) - wider
             array_cell.shapes(self.layers['pSD']).insert(psd_box)
@@ -1720,7 +1720,7 @@ class ScalableMismatchArray:
             
             # Create M1 bar
             m1_bar = db.Box(
-                m1_left_edge + self.dbu(1.2),
+                m1_left_edge + self.dbu(1),
                 ext_bottom_y - self.dbu(1),
                 m1_right_edge,
                 ext_top_y - self.dbu(0.78)
@@ -1798,7 +1798,7 @@ class ScalableMismatchArray:
         # DON'T create individual TM1 pads
         for via_y in via_y_positions:
             # Create complete via stack WITHOUT TM1 pad
-            self.create_single_via_stack_m1_to_tm1(cell, x_center-self.dbu(0.2), via_y, create_tm1_pad=False)
+            self.create_single_via_stack_m1_to_tm1(cell, x_center-self.dbu(0.4), via_y, create_tm1_pad=False)
             vias_created += 1
         
         # Create SINGLE continuous TopMetal1 pad covering all vias vertically
