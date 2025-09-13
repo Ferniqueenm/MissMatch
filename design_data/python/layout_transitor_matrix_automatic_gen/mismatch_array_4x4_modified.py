@@ -398,7 +398,7 @@ class ScalableMismatchArray:
         gr_width = geom['gr_width']
         
         # Contact parameters - INCREASED SPACING
-        cont_size = self.dbu(0.22)
+        cont_size = self.dbu(0.16)
         cont_spacing = self.dbu(0.60)  # INCREASED 50% from 0.40 to 0.60µm
         cont_pitch = cont_size + cont_spacing  # Now 0.82µm pitch
         m1_enc = self.dbu(0.06)  # Metal1 enclosure
@@ -535,7 +535,27 @@ class ScalableMismatchArray:
         print(f"    ✓ Excluded {(rows+1)*(cols+1)} intersection points")
         
         # Add bulk connection at top-right corner
-        self.add_bulk_connection_corner(array_cell, geom, rows, cols)
+        # self.add_bulk_connection_corner(array_cell, geom, rows, cols)
+
+    def extend_dummy_gatepoly(self, array_cell, trans_x, trans_y, transistor_cell):
+        """
+        Extend GatePoly area for dummy transistors by 0.1µm
+        """
+        poly_extension = self.dbu(0.1)  # 0.1µm extension
+        
+        # Find GatePoly shapes in the transistor cell
+        for shape in transistor_cell.shapes(self.layers['GatPoly']).each():
+            if shape.is_box():
+                box = shape.box
+                # Create extended poly box
+                extended_box = db.Box(
+                    trans_x + box.left - poly_extension,
+                    trans_y + box.bottom - poly_extension,
+                    trans_x + box.right + poly_extension,
+                    trans_y + box.top + poly_extension
+                )
+                # Add extended poly to array cell
+                array_cell.shapes(self.layers['GatPoly']).insert(extended_box)
 
     def calculate_shared_guardring_array(self, transistor_bbox, rows, cols):
         """Calculate dimensions for array with shared guardrings
@@ -605,6 +625,7 @@ class ScalableMismatchArray:
         print("\nCreating shared guardring structure for NMOS (IHP-compliant)...")
         
         gr_width = geom['gr_width']
+        psd_extension = self.dbu(0.03)  # 0.03µm extension on each side
         
         # For NMOS array: p-type substrate contact
         # Based on IHP script: uses pSD + Activ (NO Ptap!)
@@ -612,58 +633,58 @@ class ScalableMismatchArray:
         # Create vertical guardring stripes
         for col in range(cols + 1):
             x = col * geom['pitch_x']
-            stripe_box = db.Box(
+            
+            # pSD box - wider by 0.03µm on each side
+            psd_box = db.Box(
+                x - psd_extension, 0,
+                x + gr_width + psd_extension, geom['total_height']
+            )
+            
+            # Metal1 box - original width
+            m1_box = db.Box(
                 x, 0,
                 x + gr_width, geom['total_height']
             )
             
-            # Active area (required for guard ring)
-            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            # Active area - same as pSD (wider)
+            array_cell.shapes(self.layers['Activ']).insert(psd_box)
             
-            # P+ implant for substrate contact (pSD layer)
-            array_cell.shapes(self.layers['pSD']).insert(stripe_box)
-
-            # Metal1 overlay on pSD 
-            array_cell.shapes(self.layers['Metal1']).insert(stripe_box)
+            # P+ implant for substrate contact (pSD layer) - wider
+            array_cell.shapes(self.layers['pSD']).insert(psd_box)
+            
+            # Metal1 overlay - original width
+            array_cell.shapes(self.layers['Metal1']).insert(m1_box)
         
         # Create horizontal guardring stripes
         for row in range(rows + 1):
             y = row * geom['pitch_y']
-            stripe_box = db.Box(
+            
+            # pSD box - wider by 0.03µm on each side
+            psd_box = db.Box(
+                0, y - psd_extension,
+                geom['total_width'], y + gr_width + psd_extension
+            )
+            
+            # Metal1 box - original width
+            m1_box = db.Box(
                 0, y,
                 geom['total_width'], y + gr_width
             )
             
-            # Active area
-            array_cell.shapes(self.layers['Activ']).insert(stripe_box)
+            # Active area - same as pSD (wider)
+            array_cell.shapes(self.layers['Activ']).insert(psd_box)
             
-            # P+ implant for substrate contact
-            array_cell.shapes(self.layers['pSD']).insert(stripe_box)
-
-            # Metal1 overlay on pSD 
-            array_cell.shapes(self.layers['Metal1']).insert(stripe_box)
-        
-        # Add Metal1 at intersections for connectivity (but NO contacts)
-        # m1_size = self.dbu(0.4)  # Larger M1 pad at intersections
-        
-        # for row in range(rows + 1):
-        #     for col in range(cols + 1):
-        #         # Center of guardring intersection
-        #         x_center = col * geom['pitch_x'] + gr_width // 2
-        #         y_center = row * geom['pitch_y'] + gr_width // 2
-                
-        #         # Metal1 pad at intersection (NO Contact underneath)
-        #         m1_box = db.Box(
-        #             x_center - m1_size//2,
-        #             y_center - m1_size//2,
-        #             x_center + m1_size//2,
-        #             y_center + m1_size//2
-        #         )
-        #         array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+            # P+ implant for substrate contact - wider
+            array_cell.shapes(self.layers['pSD']).insert(psd_box)
+            
+            # Metal1 overlay - original width
+            array_cell.shapes(self.layers['Metal1']).insert(m1_box)
         
         print(f"✓ Created substrate contact guardring: {cols+1} x {rows+1} stripes")
         print(f"  Layers used: Activ, pSD, Metal1")
-        print(f"  M1 pads at intersections for connectivity (no contacts)")
+        print(f"  pSD/Activ width: {(gr_width + 2*psd_extension)*self.layout.dbu:.3f}µm")
+        print(f"  Metal1 width: {gr_width*self.layout.dbu:.3f}µm")
+        print(f"  pSD extension: {psd_extension*self.layout.dbu:.3f}µm per side")
         
         # Now add contacts with improved spacing, avoiding intersections
         self.enhance_guardring_with_bulk_connection(array_cell, geom, rows, cols)
@@ -1162,6 +1183,7 @@ class ScalableMismatchArray:
                 if is_dummy:
                     active_row = -1
                     active_col = -1
+                    self.extend_dummy_gatepoly(array_cell, trans_x, trans_y, transistor_cell)
                 else:
                     if dummy_mode == 'none':
                         active_row = row
@@ -1278,6 +1300,7 @@ class ScalableMismatchArray:
                 if is_dummy:
                     active_row = -1
                     active_col = -1
+                    self.extend_dummy_gatepoly(array_cell, trans_x, trans_y, transistor_cell)
                 else:
                     if dummy_mode == 'none':
                         active_row = row
@@ -1736,9 +1759,9 @@ class ScalableMismatchArray:
             tm1_x = drain_tm1_points[0][0] if drain_tm1_points[0][0] else sum(p[0] for p in drain_tm1_points) / len(drain_tm1_points)
             
             tm1_vertical = db.Box(
-                tm1_x - tm1_width//2,
+                tm1_x - tm1_width//2 - self.dbu(0.5),
                 bottom_extension_y,
-                tm1_x + tm1_width//2,
+                tm1_x + tm1_width//2 - self.dbu(0.5),
                 top_extension_y
             )
             array_cell.shapes(self.layers['TopMetal1']).insert(tm1_vertical)
@@ -1775,7 +1798,7 @@ class ScalableMismatchArray:
         # DON'T create individual TM1 pads
         for via_y in via_y_positions:
             # Create complete via stack WITHOUT TM1 pad
-            self.create_single_via_stack_m1_to_tm1(cell, x_center, via_y, create_tm1_pad=False)
+            self.create_single_via_stack_m1_to_tm1(cell, x_center-self.dbu(0.2), via_y, create_tm1_pad=False)
             vias_created += 1
         
         # Create SINGLE continuous TopMetal1 pad covering all vias vertically
@@ -1791,7 +1814,7 @@ class ScalableMismatchArray:
         tm1_pad = db.Box(
             x_center - tm1_width//2,
             bottom_via_y - topvia1_size//2 - self.dbu(0.1),  # Bottom
-            x_center + tm1_width//2,
+            x_center + tm1_width//2 - self.dbu(0.5) , 
             top_via_y + topvia1_size//2 + self.dbu(0.1)      # Top
         )
         cell.shapes(self.layers['TopMetal1']).insert(tm1_pad)
@@ -2145,10 +2168,10 @@ class ScalableMismatchArray:
         
         # Create single continuous TM1 pad first
         tm1_continuous = db.Box(
-            x_center - tm1_width//2,
-            bottom_via_y - topvia2_size//2 - self.dbu(0.2),
-            x_center + tm1_width//2,
-            top_via_y + topvia2_size//2 + self.dbu(0.2)
+            x_center - tm1_width//2 - self.dbu(0.13),
+            bottom_via_y - topvia2_size//2 - self.dbu(0.5),
+            x_center + tm1_width//2 + self.dbu(0.13),
+            top_via_y + topvia2_size//2 + self.dbu(0.5)
         )
         cell.shapes(self.layers['TopMetal1']).insert(tm1_continuous)
         
@@ -2174,7 +2197,7 @@ class ScalableMismatchArray:
             x_center - tm2_width//2,
             bottom_via_y - topvia2_size//2 - self.dbu(0.2),  # Bottom
             x_center + tm2_width//2,
-            top_via_y + topvia2_size//2 + self.dbu(0.2)      # Top
+            top_via_y + topvia2_size//2 + self.dbu(0.5)      # Top
         )
         cell.shapes(self.layers['TopMetal2']).insert(tm2_pad)
         
