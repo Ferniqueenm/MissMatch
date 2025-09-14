@@ -544,7 +544,7 @@ class ScalableMismatchArray:
         """
         Extend GatePoly area for dummy transistors by 0.1µm
         """
-        poly_extension = self.dbu(0.02)  # 0.01µm extension
+        poly_extension = self.dbu(0.01)  # 0.01µm extension
         
         # Find GatePoly shapes in the transistor cell
         for shape in transistor_cell.shapes(self.layers['GatPoly']).each():
@@ -552,9 +552,9 @@ class ScalableMismatchArray:
                 box = shape.box
                 # Create extended poly box
                 extended_box = db.Box(
-                    trans_x + box.left - poly_extension,
+                    trans_x + box.left ,
                     trans_y + box.bottom - poly_extension,
-                    trans_x + box.right + poly_extension,
+                    trans_x + box.right ,
                     trans_y + box.top + poly_extension
                 )
                 # Add extended poly to array cell
@@ -1481,6 +1481,7 @@ class ScalableMismatchArray:
         
         m3_width = self.dbu(METAL3_WIDTH)
         poly_extension = self.dbu(2)  # 1.5μm extension above transistor
+        poly_extra_height = self.dbu(0.1)
         
         # Get transistor PCell for terminal analysis
         transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
@@ -1580,7 +1581,7 @@ class ScalableMismatchArray:
                     gate_x - poly_width//2,
                     poly_top,
                     gate_x + poly_width//2,
-                    poly_extension_y
+                    poly_extension_y + poly_extra_height
                 )
                 array_cell.shapes(self.layers['GatPoly']).insert(poly_ext_box)
                 
@@ -1600,7 +1601,7 @@ class ScalableMismatchArray:
             # Create horizontal M3 bus extending to guard ring edges + extension
             h_bus_box = db.Box(
                 left_extension_x - m3_width//2,
-                bus_y - m3_width//2,
+                bus_y - m3_width//2 ,
                 right_extension_x + m3_width//2,
                 bus_y + m3_width//2
             )
