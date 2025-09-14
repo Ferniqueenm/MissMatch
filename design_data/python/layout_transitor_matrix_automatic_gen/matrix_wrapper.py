@@ -330,18 +330,14 @@ class MatrixWrapper:
                     source_cell, source_layout = self.read_gds_cell(gds_file)
                     bbox = source_cell.bbox()
                     
-                    # Copy all shapes (flattened)
-                    for layer_info in temp_layout.layer_infos():
-                        layer = layer_info.layer
-                        datatype = layer_info.datatype
-                        
-                        source_layer_idx = temp_layout.layer(layer, datatype)
-                        target_layer_idx = self.layout.layer(layer, datatype)
-                        
-                        # Use Region to get all shapes
-                        region = db.Region(source_cell.begin_shapes_rec(source_layer_idx))
-                        for polygon in region.each():
-                            array_cell.shapes(target_layer_idx).insert(polygon)
+                    # MODIFIED: Filter contacts in overlap zones
+                    overlap_x_um = 4.6 + 1.14 - 0.5  # Your horizontal overlap
+                    overlap_y_um = 13.5  # Your vertical overlap
+                    overlap_x_dbu = int(overlap_x_um / self.layout.dbu)
+                    overlap_y_dbu = int(overlap_y_um / self.layout.dbu)
+                    
+                    # Use the new filtering method
+                    self.filter_overlapping_contacts(array_cell, source_cell, source_layout, row, col, overlap_x_dbu, overlap_y_dbu)
                     
                     # Add matrix number label
                     self.update_connection_labels(array_cell, matrix_num)
@@ -512,6 +508,90 @@ class MatrixWrapper:
         # Final report
         self.print_final_report()
     
+    def filter_overlapping_contacts(self, array_cell, source_cell, source_layout, row, col, overlap_x_dbu, overlap_y_dbu):
+        """
+        Copy shapes from source cell to array cell, filtering contacts in overlap zones
+        """
+        # Define overlap regions to exclude contacts
+        exclude_regions = []
+        
+        # Get source cell bbox
+        bbox = source_cell.bbox()
+        
+        # Right edge overlap (except for rightmost column)
+        if col < self.matrix_cols - 1:
+            right_exclude = db.Box(
+                bbox.right - overlap_x_dbu,
+                bbox.bottom,
+                bbox.right,
+                bbox.top
+            )
+            exclude_regions.append(('right', right_exclude))
+        
+        # Top edge overlap (except for top row)
+        if row < self.matrix_rows - 1:
+            top_exclude = db.Box(
+                bbox.left,
+                bbox.top - overlap_y_dbu,
+                bbox.right,
+                bbox.top
+            )
+            exclude_regions.append(('top', top_exclude))
+        
+        # Top-right corner (if both overlaps apply)
+        if col < self.matrix_cols - 1 and row < self.matrix_rows - 1:
+            corner_exclude = db.Box(
+                bbox.right - overlap_x_dbu,
+                bbox.top - overlap_y_dbu,
+                bbox.right,
+                bbox.top
+            )
+            exclude_regions.append(('corner', corner_exclude))
+        
+        # Copy all shapes, filtering contacts in overlap regions
+        for layer_info in source_layout.layer_infos():
+            layer = layer_info.layer
+            datatype = layer_info.datatype
+            
+            source_layer_idx = source_layout.layer(layer, datatype)
+            target_layer_idx = self.layout.layer(layer, datatype)
+            
+            # Check if this is the contact layer (6, 0)
+            is_contact_layer = (layer == 6 and datatype == 0)
+            
+            # Process shapes
+            region = db.Region(source_cell.begin_shapes_rec(source_layer_idx))
+            
+            if is_contact_layer and exclude_regions:
+                # Filter contacts in overlap zones
+                filtered_region = db.Region()
+                contacts_removed = 0
+                
+                for polygon in region.each():
+                    poly_box = polygon.bbox()
+                    should_exclude = False
+                    
+                    # Check if this contact is in any exclusion zone
+                    for zone_name, exclude_box in exclude_regions:
+                        if exclude_box.overlaps(poly_box):
+                            should_exclude = True
+                            contacts_removed += 1
+                            break
+                    
+                    if not should_exclude:
+                        filtered_region.insert(polygon)
+                
+                # Insert filtered contacts
+                for polygon in filtered_region.each():
+                    array_cell.shapes(target_layer_idx).insert(polygon)
+                
+                if contacts_removed > 0:
+                    print(f"      Removed {contacts_removed} contacts from overlap zones")
+            else:
+                # Copy all shapes for non-contact layers
+                for polygon in region.each():
+                    array_cell.shapes(target_layer_idx).insert(polygon)
+
     def add_matrix_labels(self):
         """Add labels for the complete matrix"""
         bbox = self.top_cell.bbox()
