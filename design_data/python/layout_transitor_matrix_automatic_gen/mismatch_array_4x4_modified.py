@@ -31,8 +31,8 @@ METAL1_WIDTH = 0.28
 METAL2_WIDTH = 0.36
 METAL3_WIDTH = 0.20
 POLY_WIDTH = 0.13
-VIA1_SIZE = 0.19
-VIA2_SIZE = 0.19
+VIA1_SIZE = 0.2
+VIA2_SIZE = 0.2
 CONT_SIZE = 0.16
 CONT_SPACING = 0.40
 PAD_SIZE = 50.0
@@ -541,7 +541,7 @@ class ScalableMismatchArray:
         """
         Extend GatePoly area for dummy transistors by 0.1µm
         """
-        poly_extension = self.dbu(0.1)  # 0.1µm extension
+        poly_extension = self.dbu(0.02)  # 0.01µm extension
         
         # Find GatePoly shapes in the transistor cell
         for shape in transistor_cell.shapes(self.layers['GatPoly']).each():
@@ -626,7 +626,7 @@ class ScalableMismatchArray:
         
         gr_width = geom['gr_width']
         psd_extension = self.dbu(0.03)  # pSD 0.03µm wider than M1 on each side
-        activ_extension = self.dbu(0.06)  # Activ 0.03µm wider than pSD on each side (0.06µm total from M1)
+        activ_extension = self.dbu(0.06)  # Activ 0.03µm wider than pSD on each side
         
         # For NMOS array: p-type substrate contact
         # Based on IHP script: uses pSD + Activ (NO Ptap!)
@@ -635,19 +635,23 @@ class ScalableMismatchArray:
         for col in range(cols + 1):
             x = col * geom['pitch_x']
             
-            # Activ box - widest (0.06µm extension from M1 on each side)
+            # Activ box - widest, extended in length to cover corners
             activ_box = db.Box(
-                x - activ_extension, 0,
-                x + gr_width + activ_extension, geom['total_height']
+                x - activ_extension, 
+                -activ_extension,  # Extended below
+                x + gr_width + activ_extension, 
+                geom['total_height'] + activ_extension  # Extended above
             )
             
-            # pSD box - middle width (0.03µm extension from M1 on each side)
+            # pSD box - middle width, extended in length
             psd_box = db.Box(
-                x - psd_extension, 0,
-                x + gr_width + psd_extension, geom['total_height']
+                x - psd_extension, 
+                -psd_extension,  # Extended below
+                x + gr_width + psd_extension, 
+                geom['total_height'] + psd_extension  # Extended above
             )
             
-            # Metal1 box - narrowest (original width)
+            # Metal1 box - narrowest (original dimensions)
             m1_box = db.Box(
                 x, 0,
                 x + gr_width, geom['total_height']
@@ -666,19 +670,23 @@ class ScalableMismatchArray:
         for row in range(rows + 1):
             y = row * geom['pitch_y']
             
-            # Activ box - widest (0.06µm extension from M1 on each side)
+            # Activ box - widest, extended in length to cover corners
             activ_box = db.Box(
-                0, y - activ_extension,
-                geom['total_width'], y + gr_width + activ_extension
+                -activ_extension,  # Extended left
+                y - activ_extension,
+                geom['total_width'] + activ_extension,  # Extended right
+                y + gr_width + activ_extension
             )
             
-            # pSD box - middle width (0.03µm extension from M1 on each side)
+            # pSD box - middle width, extended in length
             psd_box = db.Box(
-                0, y - psd_extension,
-                geom['total_width'], y + gr_width + psd_extension
+                -psd_extension,  # Extended left
+                y - psd_extension,
+                geom['total_width'] + psd_extension,  # Extended right
+                y + gr_width + psd_extension
             )
             
-            # Metal1 box - narrowest (original width)
+            # Metal1 box - narrowest (original dimensions)
             m1_box = db.Box(
                 0, y,
                 geom['total_width'], y + gr_width
@@ -695,10 +703,10 @@ class ScalableMismatchArray:
         
         print(f"✓ Created substrate contact guardring: {cols+1} x {rows+1} stripes")
         print(f"  Layers used: Activ, pSD, Metal1")
-        print(f"  Activ width: {(gr_width + 2*activ_extension)*self.layout.dbu:.3f}µm")
-        print(f"  pSD width: {(gr_width + 2*psd_extension)*self.layout.dbu:.3f}µm")
+        print(f"  Activ width: {(gr_width + 2*activ_extension)*self.layout.dbu:.3f}µm (extended at corners)")
+        print(f"  pSD width: {(gr_width + 2*psd_extension)*self.layout.dbu:.3f}µm (extended at corners)")
         print(f"  Metal1 width: {gr_width*self.layout.dbu:.3f}µm")
-        print(f"  Layer hierarchy: Activ (widest) > pSD (middle) > Metal1 (narrowest)")
+        print(f"  Corner overlaps ensured for Activ and pSD layers")
         
         # Now add contacts with improved spacing, avoiding intersections
         self.enhance_guardring_with_bulk_connection(array_cell, geom, rows, cols)
@@ -1087,7 +1095,7 @@ class ScalableMismatchArray:
         array_cell.shapes(self.layers['Metal3']).insert(m3_pad)
         
         # Via3 (M3 to M4)
-        via3_size = self.dbu(0.19)
+        via3_size = self.dbu(0.20)
         via3_box = db.Box(
             corner_x - via3_size//2, corner_y - via3_size//2,
             corner_x + via3_size//2, corner_y + via3_size//2
@@ -1842,7 +1850,7 @@ class ScalableMismatchArray:
         self.create_via_stack_m1_to_m4(cell, x, y)
         
         # Via4 (M4 to M5) - CORRECTED SIZE
-        via4_size = self.dbu(0.19)  # Correct size for Via4
+        via4_size = self.dbu(0.20)  # Correct size for Via4
         via4_box = db.Box(
             x - via4_size//2, y - via4_size//2,
             x + via4_size//2, y + via4_size//2
@@ -2225,7 +2233,7 @@ class ScalableMismatchArray:
         vias_created = 0
         
         # Via sizes and spacings
-        via1_size = self.dbu(0.19)
+        via1_size = self.dbu(0.20)
         topvia1_size = self.dbu(0.42)
         topvia1_spacing = self.dbu(0.42)
         topvia1_pitch = topvia1_size + topvia1_spacing  # 0.84μm
@@ -2306,7 +2314,7 @@ class ScalableMismatchArray:
             FIXED: Only create TM1 pad if explicitly requested to avoid DRC violations
             """
             # Via sizes
-            via_size = self.dbu(0.19)
+            via_size = self.dbu(0.20)
             topvia1_size = self.dbu(0.42)
             enc = self.dbu(0.06)
             
@@ -2391,7 +2399,7 @@ class ScalableMismatchArray:
         """Create via stack from M1 to M4 with CORRECT via sizes"""
         
         # Via1 (M1 to M2) - CORRECTED SIZE
-        via1_size = self.dbu(0.19)  # Was 0.26
+        via1_size = self.dbu(0.20)  # Was 0.26
         via1_box = db.Box(
             x - via1_size//2, y - via1_size//2,
             x + via1_size//2, y + via1_size//2
@@ -2417,7 +2425,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Metal3']).insert(m3_pad)
         
         # Via3 (M3 to M4) - CORRECTED SIZE
-        via3_size = self.dbu(0.19)  # Was 0.26
+        via3_size = self.dbu(0.20)  # Was 0.26
         via3_box = db.Box(
             x - via3_size//2, y - via3_size//2,
             x + via3_size//2, y + via3_size//2
@@ -2436,7 +2444,7 @@ class ScalableMismatchArray:
             self.create_via_stack_m1_to_m4(cell, x, y)
             
             # Via4 (M4 to M5)
-            via4_size = self.dbu(0.19)
+            via4_size = self.dbu(0.2)
             via4_box = db.Box(
                 x - via4_size//2, y - via4_size//2,
                 x + via4_size//2, y + via4_size//2
