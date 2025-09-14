@@ -400,7 +400,7 @@ class ScalableMismatchArray:
         
         # Contact parameters - RECTANGULAR CONTACTS
         cont_width = self.dbu(0.16)   # 0.16µm width
-        cont_length = self.dbu(0.34)  # 0.34µm length (longer dimension)
+        cont_length = self.dbu(0.35)  # 0.34µm length (longer dimension)
         cont_spacing = self.dbu(0.60)  # 0.60µm spacing
         cont_pitch = cont_length + cont_spacing  # Pitch based on length
         m1_enc = self.dbu(0.06)  # Metal1 enclosure
