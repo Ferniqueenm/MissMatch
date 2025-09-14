@@ -392,22 +392,25 @@ class ScalableMismatchArray:
     def enhance_guardring_with_bulk_connection(self, array_cell, geom, rows, cols):
         """
         Add contacts to guardring with IMPROVED SPACING and NO INTERSECTIONS
+        - Rectangular contacts: 0.16µm wide x 0.34µm long
         - 50% more spacing (0.60µm instead of 0.40µm)
         - No contacts at cross points, T-junctions, or any multi-line intersections
         """
         gr_width = geom['gr_width']
         
-        # Contact parameters - INCREASED SPACING
-        cont_size = self.dbu(0.16)
-        cont_spacing = self.dbu(0.60)  # INCREASED 50% from 0.40 to 0.60µm
-        cont_pitch = cont_size + cont_spacing  # Now 0.82µm pitch
+        # Contact parameters - RECTANGULAR CONTACTS
+        cont_width = self.dbu(0.16)   # 0.16µm width
+        cont_length = self.dbu(0.34)  # 0.34µm length (longer dimension)
+        cont_spacing = self.dbu(0.60)  # 0.60µm spacing
+        cont_pitch = cont_length + cont_spacing  # Pitch based on length
         m1_enc = self.dbu(0.06)  # Metal1 enclosure
         
         # Define exclusion zone around intersections
         exclusion_radius = self.dbu(0.5)  # 0.5µm exclusion radius around intersections
         
         print("\n  Adding improved contacts to guardring...")
-        print(f"    Contact pitch: {cont_pitch*self.layout.dbu:.3f}µm (50% increased)")
+        print(f"    Contact size: {cont_width*self.layout.dbu:.3f} x {cont_length*self.layout.dbu:.3f}µm (rectangular)")
+        print(f"    Contact pitch: {cont_pitch*self.layout.dbu:.3f}µm")
         print(f"    Avoiding all intersections (cross, T-junctions)")
         
         contacts_added = 0
@@ -431,7 +434,7 @@ class ScalableMismatchArray:
                     return True
             return False
         
-        # VERTICAL STRIPES - contacts along vertical lines, avoiding intersections
+        # VERTICAL STRIPES - contacts oriented vertically (length along Y)
         for col in range(cols + 1):
             x_center = col * geom['pitch_x'] + gr_width // 2
             
@@ -452,12 +455,12 @@ class ScalableMismatchArray:
                 
                 # Place contacts in this segment
                 segment_length = y_end - y_start
-                if segment_length > cont_size:
-                    num_contacts = int((segment_length - cont_size) / cont_pitch) + 1
+                if segment_length > cont_length:
+                    num_contacts = int((segment_length - cont_length) / cont_pitch) + 1
                     
                     # Adjust spacing to distribute evenly in segment
                     if num_contacts > 1:
-                        actual_pitch = (segment_length - cont_size) / (num_contacts - 1)
+                        actual_pitch = (segment_length - cont_length) / (num_contacts - 1)
                     else:
                         actual_pitch = 0
                     
@@ -465,23 +468,23 @@ class ScalableMismatchArray:
                         if num_contacts == 1:
                             y = y_start + segment_length / 2
                         else:
-                            y = y_start + cont_size/2 + i * actual_pitch
+                            y = y_start + cont_length/2 + i * actual_pitch
                         
                         # Double-check we're not near an intersection
                         if not is_near_intersection(x_center, y):
-                            # Contact
+                            # Contact - vertical orientation (narrow width, long height)
                             cont_box = db.Box(
-                                x_center - cont_size//2, y - cont_size//2,
-                                x_center + cont_size//2, y + cont_size//2
+                                x_center - cont_width//2, y - cont_length//2,
+                                x_center + cont_width//2, y + cont_length//2
                             )
                             array_cell.shapes(self.layers['Cont']).insert(cont_box)
                             
                             # M1 with enclosure
-                            # m1_box = cont_box.enlarged(m1_enc)
-                            # array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                            m1_box = cont_box.enlarged(m1_enc)
+                            array_cell.shapes(self.layers['Metal1']).insert(m1_box)
                             contacts_added += 1
         
-        # HORIZONTAL STRIPES - contacts along horizontal lines, avoiding intersections
+        # HORIZONTAL STRIPES - contacts oriented horizontally (length along X)
         for row in range(rows + 1):
             y_center = row * geom['pitch_y'] + gr_width // 2
             
@@ -502,12 +505,12 @@ class ScalableMismatchArray:
                 
                 # Place contacts in this segment
                 segment_length = x_end - x_start
-                if segment_length > cont_size:
-                    num_contacts = int((segment_length - cont_size) / cont_pitch) + 1
+                if segment_length > cont_length:
+                    num_contacts = int((segment_length - cont_length) / cont_pitch) + 1
                     
                     # Adjust spacing to distribute evenly in segment
                     if num_contacts > 1:
-                        actual_pitch = (segment_length - cont_size) / (num_contacts - 1)
+                        actual_pitch = (segment_length - cont_length) / (num_contacts - 1)
                     else:
                         actual_pitch = 0
                     
@@ -515,23 +518,23 @@ class ScalableMismatchArray:
                         if num_contacts == 1:
                             x = x_start + segment_length / 2
                         else:
-                            x = x_start + cont_size/2 + i * actual_pitch
+                            x = x_start + cont_length/2 + i * actual_pitch
                         
                         # Double-check we're not near an intersection
                         if not is_near_intersection(x, y_center):
-                            # Contact
+                            # Contact - horizontal orientation (long width, narrow height)
                             cont_box = db.Box(
-                                x - cont_size//2, y_center - cont_size//2,
-                                x + cont_size//2, y_center + cont_size//2
+                                x - cont_length//2, y_center - cont_width//2,
+                                x + cont_length//2, y_center + cont_width//2
                             )
                             array_cell.shapes(self.layers['Cont']).insert(cont_box)
                             
                             # M1 with enclosure
-                            # m1_box = cont_box.enlarged(m1_enc)
-                            # array_cell.shapes(self.layers['Metal1']).insert(m1_box)
+                            m1_box = cont_box.enlarged(m1_enc)
+                            array_cell.shapes(self.layers['Metal1']).insert(m1_box)
                             contacts_added += 1
         
-        print(f"    ✓ Added {contacts_added} contacts (no intersections)")
+        print(f"    ✓ Added {contacts_added} rectangular contacts")
         print(f"    ✓ Excluded {(rows+1)*(cols+1)} intersection points")
         
         # Add bulk connection at top-right corner
