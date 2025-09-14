@@ -362,7 +362,7 @@ class MatrixWrapper:
         print("\nStep 2: Calculating positions with guardring overlap...")
         
         # Overlap values that work well
-        overlap_x_um = 4.6+1.14-0.5   # um - Horizontal overlap (left/right)
+        overlap_x_um = 4.6+1.14-0.5 + 0.0005   # um - Horizontal overlap (left/right)
         overlap_y_um = 13.5  # um - Vertical overlap (top/bottom)
         
         overlap_x_dbu = int(overlap_x_um / self.layout.dbu)
