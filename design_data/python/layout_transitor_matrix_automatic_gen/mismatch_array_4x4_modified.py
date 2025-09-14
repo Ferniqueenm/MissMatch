@@ -33,7 +33,7 @@ METAL3_WIDTH = 0.20
 POLY_WIDTH = 0.13
 VIA1_SIZE = 0.19
 VIA2_SIZE = 0.19
-CONT_SIZE = 0.22
+CONT_SIZE = 0.16
 CONT_SPACING = 0.40
 PAD_SIZE = 50.0
 
@@ -616,7 +616,7 @@ class ScalableMismatchArray:
             't_width': transistor_bbox.width(),  # Keep original bbox for transistor placement
             't_height': transistor_bbox.height()
         }
-    
+
     def create_shared_guardring_structure(self, array_cell, geom, rows, cols):
         """
         Create shared guardring structure for NMOS array
@@ -625,7 +625,8 @@ class ScalableMismatchArray:
         print("\nCreating shared guardring structure for NMOS (IHP-compliant)...")
         
         gr_width = geom['gr_width']
-        psd_extension = self.dbu(0.04)  # 0.03µm extension on each side
+        psd_extension = self.dbu(0.03)  # pSD 0.03µm wider than M1 on each side
+        activ_extension = self.dbu(0.06)  # Activ 0.03µm wider than pSD on each side (0.06µm total from M1)
         
         # For NMOS array: p-type substrate contact
         # Based on IHP script: uses pSD + Activ (NO Ptap!)
@@ -634,57 +635,70 @@ class ScalableMismatchArray:
         for col in range(cols + 1):
             x = col * geom['pitch_x']
             
-            # pSD box - wider by 0.03µm on each side
+            # Activ box - widest (0.06µm extension from M1 on each side)
+            activ_box = db.Box(
+                x - activ_extension, 0,
+                x + gr_width + activ_extension, geom['total_height']
+            )
+            
+            # pSD box - middle width (0.03µm extension from M1 on each side)
             psd_box = db.Box(
                 x - psd_extension, 0,
                 x + gr_width + psd_extension, geom['total_height']
             )
             
-            # Metal1 box - original width
+            # Metal1 box - narrowest (original width)
             m1_box = db.Box(
                 x, 0,
                 x + gr_width, geom['total_height']
             )
             
-            # Active area - same as pSD (wider)
-            array_cell.shapes(self.layers['Activ']).insert(m1_box)
+            # Active area - widest
+            array_cell.shapes(self.layers['Activ']).insert(activ_box)
             
-            # P+ implant for substrate contact (pSD layer) - wider
+            # P+ implant for substrate contact (pSD layer) - middle width
             array_cell.shapes(self.layers['pSD']).insert(psd_box)
             
-            # Metal1 overlay - original width
+            # Metal1 overlay - narrowest
             array_cell.shapes(self.layers['Metal1']).insert(m1_box)
         
         # Create horizontal guardring stripes
         for row in range(rows + 1):
             y = row * geom['pitch_y']
             
-            # pSD box - wider by 0.03µm on each side
+            # Activ box - widest (0.06µm extension from M1 on each side)
+            activ_box = db.Box(
+                0, y - activ_extension,
+                geom['total_width'], y + gr_width + activ_extension
+            )
+            
+            # pSD box - middle width (0.03µm extension from M1 on each side)
             psd_box = db.Box(
                 0, y - psd_extension,
                 geom['total_width'], y + gr_width + psd_extension
             )
             
-            # Metal1 box - original width
+            # Metal1 box - narrowest (original width)
             m1_box = db.Box(
                 0, y,
                 geom['total_width'], y + gr_width
             )
             
-            # Active area - same as pSD (wider)
-            array_cell.shapes(self.layers['Activ']).insert(psd_box)
+            # Active area - widest
+            array_cell.shapes(self.layers['Activ']).insert(activ_box)
             
-            # P+ implant for substrate contact - wider
+            # P+ implant for substrate contact - middle width
             array_cell.shapes(self.layers['pSD']).insert(psd_box)
             
-            # Metal1 overlay - original width
+            # Metal1 overlay - narrowest
             array_cell.shapes(self.layers['Metal1']).insert(m1_box)
         
         print(f"✓ Created substrate contact guardring: {cols+1} x {rows+1} stripes")
         print(f"  Layers used: Activ, pSD, Metal1")
-        print(f"  pSD/Activ width: {(gr_width + 2*psd_extension)*self.layout.dbu:.3f}µm")
+        print(f"  Activ width: {(gr_width + 2*activ_extension)*self.layout.dbu:.3f}µm")
+        print(f"  pSD width: {(gr_width + 2*psd_extension)*self.layout.dbu:.3f}µm")
         print(f"  Metal1 width: {gr_width*self.layout.dbu:.3f}µm")
-        print(f"  pSD extension: {psd_extension*self.layout.dbu:.3f}µm per side")
+        print(f"  Layer hierarchy: Activ (widest) > pSD (middle) > Metal1 (narrowest)")
         
         # Now add contacts with improved spacing, avoiding intersections
         self.enhance_guardring_with_bulk_connection(array_cell, geom, rows, cols)
@@ -781,7 +795,7 @@ class ScalableMismatchArray:
         Maintains 0.60μm spacing, avoids intersections
         """
         gr_width = geom['gr_width']
-        cont_size = self.dbu(0.22)
+        cont_size = self.dbu(0.16)
         cont_spacing = self.dbu(0.60)  # 50% increased spacing
         cont_pitch = cont_size + cont_spacing  # 0.82μm pitch
         m1_enc = self.dbu(0.06)
