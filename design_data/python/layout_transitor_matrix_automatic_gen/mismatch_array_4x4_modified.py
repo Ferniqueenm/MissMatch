@@ -1481,7 +1481,7 @@ class ScalableMismatchArray:
         
         m3_width = self.dbu(METAL3_WIDTH)
         poly_extension = self.dbu(2)  # 1.5μm extension above transistor
-        poly_extra_height = self.dbu(0.1-0.02)
+        poly_extra_height = self.dbu(0.1+0.07)
         
         # Get transistor PCell for terminal analysis
         transistor_pcell = self.create_transistor_pcell('nmos' if self.device_type != 'pmos' else 'pmos')
@@ -1577,7 +1577,7 @@ class ScalableMismatchArray:
                 
                 # Create poly extension (vertical stripe)
                 # poly_width = self.dbu(POLY_WIDTH)
-                poly_width = self.dbu(0.16)
+                poly_width = self.dbu(0.2+0.1)
                 poly_ext_box = db.Box(
                     gate_x - poly_width//2,
                     poly_top,
