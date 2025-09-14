@@ -31,8 +31,8 @@ METAL1_WIDTH = 0.28
 METAL2_WIDTH = 0.36
 METAL3_WIDTH = 0.20
 POLY_WIDTH = 0.13
-VIA1_SIZE = 0.2
-VIA2_SIZE = 0.2
+VIA1_SIZE = 0.19
+VIA2_SIZE = 0.19
 CONT_SIZE = 0.16
 CONT_SPACING = 0.40
 PAD_SIZE = 50.0
@@ -1095,7 +1095,7 @@ class ScalableMismatchArray:
         array_cell.shapes(self.layers['Metal3']).insert(m3_pad)
         
         # Via3 (M3 to M4)
-        via3_size = self.dbu(0.20)
+        via3_size = self.dbu(0.19)
         via3_box = db.Box(
             corner_x - via3_size//2, corner_y - via3_size//2,
             corner_x + via3_size//2, corner_y + via3_size//2
@@ -1850,7 +1850,7 @@ class ScalableMismatchArray:
         self.create_via_stack_m1_to_m4(cell, x, y)
         
         # Via4 (M4 to M5) - CORRECTED SIZE
-        via4_size = self.dbu(0.20)  # Correct size for Via4
+        via4_size = self.dbu(0.19)  # Correct size for Via4
         via4_box = db.Box(
             x - via4_size//2, y - via4_size//2,
             x + via4_size//2, y + via4_size//2
@@ -2233,7 +2233,7 @@ class ScalableMismatchArray:
         vias_created = 0
         
         # Via sizes and spacings
-        via1_size = self.dbu(0.20)
+        via1_size = self.dbu(0.19)
         topvia1_size = self.dbu(0.42)
         topvia1_spacing = self.dbu(0.42)
         topvia1_pitch = topvia1_size + topvia1_spacing  # 0.84μm
@@ -2314,7 +2314,7 @@ class ScalableMismatchArray:
             FIXED: Only create TM1 pad if explicitly requested to avoid DRC violations
             """
             # Via sizes
-            via_size = self.dbu(0.20)
+            via_size = self.dbu(0.19)
             topvia1_size = self.dbu(0.42)
             enc = self.dbu(0.06)
             
@@ -2399,7 +2399,7 @@ class ScalableMismatchArray:
         """Create via stack from M1 to M4 with CORRECT via sizes"""
         
         # Via1 (M1 to M2) - CORRECTED SIZE
-        via1_size = self.dbu(0.20)  # Was 0.26
+        via1_size = self.dbu(0.19)  # Was 0.26
         via1_box = db.Box(
             x - via1_size//2, y - via1_size//2,
             x + via1_size//2, y + via1_size//2
@@ -2425,7 +2425,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Metal3']).insert(m3_pad)
         
         # Via3 (M3 to M4) - CORRECTED SIZE
-        via3_size = self.dbu(0.20)  # Was 0.26
+        via3_size = self.dbu(0.19)  # Was 0.26
         via3_box = db.Box(
             x - via3_size//2, y - via3_size//2,
             x + via3_size//2, y + via3_size//2
@@ -2444,7 +2444,7 @@ class ScalableMismatchArray:
             self.create_via_stack_m1_to_m4(cell, x, y)
             
             # Via4 (M4 to M5)
-            via4_size = self.dbu(0.2)
+            via4_size = self.dbu(0.19)
             via4_box = db.Box(
                 x - via4_size//2, y - via4_size//2,
                 x + via4_size//2, y + via4_size//2
