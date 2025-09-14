@@ -1576,7 +1576,8 @@ class ScalableMismatchArray:
                 poly_extension_y = poly_top + poly_extension
                 
                 # Create poly extension (vertical stripe)
-                poly_width = self.dbu(POLY_WIDTH)
+                # poly_width = self.dbu(POLY_WIDTH)
+                poly_width = self.dbu(0.16)
                 poly_ext_box = db.Box(
                     gate_x - poly_width//2,
                     poly_top,
