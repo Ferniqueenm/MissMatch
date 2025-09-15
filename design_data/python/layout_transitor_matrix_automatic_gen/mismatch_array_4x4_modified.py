@@ -1146,6 +1146,14 @@ class ScalableMismatchArray:
         
         array_cell = self.layout.create_cell(f'nmos_array_{ARRAY_SIZE}x{ARRAY_SIZE}')
         
+        # Define grid for alignment (typical for SG13G2)
+        GRID_SIZE = 0.005  # 5nm grid
+        
+        def snap_to_grid(value_dbu):
+            """Snap a value in database units to the nearest grid point"""
+            grid_dbu = self.dbu(GRID_SIZE)
+            return int(round(value_dbu / grid_dbu) * grid_dbu)
+        
         # Get dummy mode from metadata
         dummy_mode = self.metadata.get('dummy_mode', 'sides')
         print(f"  Dummy mode: {dummy_mode}")
@@ -1194,21 +1202,36 @@ class ScalableMismatchArray:
                 cell_center_x = col * geom['pitch_x'] + geom['gr_width'] + geom['cell_inner_width'] // 2
                 cell_center_y = row * geom['pitch_y'] + geom['gr_width'] + geom['cell_inner_height'] // 2
                 
+                # SNAP centers to grid
+                cell_center_x = snap_to_grid(cell_center_x)
+                cell_center_y = snap_to_grid(cell_center_y)
+                
                 # Position transistor
                 bbox_center_x = t_bbox.center().x
                 bbox_center_y = t_bbox.center().y
                 
+                # SNAP bbox centers to grid
+                bbox_center_x = snap_to_grid(bbox_center_x)
+                bbox_center_y = snap_to_grid(bbox_center_y)
+                
                 trans_x = cell_center_x - bbox_center_x
                 trans_y = cell_center_y - bbox_center_y
                 
+                # Final snap to ensure the translation is on-grid
+                trans_x = snap_to_grid(trans_x)
+                trans_y = snap_to_grid(trans_y)
+                
                 trans = db.Trans(db.Point(trans_x, trans_y))
                 array_cell.insert(db.CellInstArray(transistor_pcell, trans))
+                
+                # Extend GatePoly for dummy transistors if needed
+                if is_dummy:
+                    self.extend_dummy_gatepoly(array_cell, trans_x, trans_y, transistor_cell)
                 
                 # Calculate active indices
                 if is_dummy:
                     active_row = -1
                     active_col = -1
-                    self.extend_dummy_gatepoly(array_cell, trans_x, trans_y, transistor_cell)
                 else:
                     if dummy_mode == 'none':
                         active_row = row
@@ -1225,8 +1248,8 @@ class ScalableMismatchArray:
                     'col': col,
                     'active_row': active_row,
                     'active_col': active_col,
-                    'x': cell_center_x,
-                    'y': cell_center_y,
+                    'x': cell_center_x,  # Already snapped
+                    'y': cell_center_y,  # Already snapped
                     'is_dummy': is_dummy,
                     'gate_x': cell_center_x * self.layout.dbu,
                     'gate_y': cell_center_y * self.layout.dbu
@@ -1242,6 +1265,7 @@ class ScalableMismatchArray:
                     self.debug_info['transistor_count'] += 1
         
         print(f"✓ Placed {active_count} active + {dummy_count} dummy transistors")
+        print(f"  All positions snapped to {GRID_SIZE}µm grid")
 
         if dummy_count > 0:
             self.connect_dummies_to_vss(array_cell, transistor_info, geom)
@@ -1252,6 +1276,10 @@ class ScalableMismatchArray:
             print(f"Side dummies only: left/right columns")
         else:
             print(f"No dummy transistors")
+        
+        # Route connections
+        self.route_gate_connections_horizontal(array_cell, transistor_info, geom)
+        self.route_drain_source_connections_new_orientation(array_cell, transistor_info, geom)
         
         return array_cell, transistor_info, geom
 
