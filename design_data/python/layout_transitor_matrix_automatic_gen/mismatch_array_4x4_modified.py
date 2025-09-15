@@ -544,7 +544,7 @@ class ScalableMismatchArray:
         """
         Extend GatePoly area for dummy transistors by 0.1µm
         """
-        poly_extension = self.dbu(0.01)  # 0.01µm extension
+        poly_extension = self.dbu(0.1)  # 0.01µm extension
         
         # Find GatePoly shapes in the transistor cell
         for shape in transistor_cell.shapes(self.layers['GatPoly']).each():
@@ -1635,7 +1635,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Cont']).insert(cont_box)
         
         # M1 pad
-        m1_pad = cont_box.enlarged(self.dbu(0.05))
+        m1_pad = cont_box.enlarged(self.dbu(0.09))
         cell.shapes(self.layers['Metal1']).insert(m1_pad)
         
         # Via1 (M1 to M2)
@@ -1646,7 +1646,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Via1']).insert(via1_box)
         
         # M2 pad
-        m2_pad = via1_box.enlarged(self.dbu(0.05))
+        m2_pad = via1_box.enlarged(self.dbu(0.09))
         cell.shapes(self.layers['Metal2']).insert(m2_pad)
         
         # Via2 (M2 to M3)
