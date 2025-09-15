@@ -1646,7 +1646,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Via1']).insert(via1_box)
         
         # M2 pad
-        m2_pad = via1_box.enlarged(self.dbu(0.09))
+        m2_pad = via1_box.enlarged(self.dbu(0.1))
         cell.shapes(self.layers['Metal2']).insert(m2_pad)
         
         # Via2 (M2 to M3)
@@ -1861,13 +1861,9 @@ class ScalableMismatchArray:
             x + via4_size//2, y + via4_size//2
         )
         cell.shapes(self.layers['Via4']).insert(via4_box)
-        
-        # M5 pad - CORRECCIÓN CRÍTICA!!!
-        # ANTES (INCORRECTO):
-        # m5_size = self.dbu(0.06)  # ❌ Solo 60nm!
-        
+                
         # DESPUÉS (CORRECTO):
-        m5_enc = self.dbu(0.06)  # Enclosure de 60nm
+        m5_enc = self.dbu(0.1)  # Enclosure de 60nm
         m5_pad = via4_box.enlarged(m5_enc)  # ✅ M5 con enclosure apropiado
         # Esto crea un M5 de 0.19 + 2*0.06 = 0.31µm
         
@@ -2413,7 +2409,7 @@ class ScalableMismatchArray:
         
         # M2 pad with proper enclosure
         m2_enc = self.dbu(0.06)
-        m2_pad = via1_box.enlarged(m2_enc)
+        m2_pad = via1_box.enlarged(self.dbu(0.1))
         cell.shapes(self.layers['Metal2']).insert(m2_pad)
         
         # Via2 (M2 to M3) - CORRECTED SIZE
@@ -2425,7 +2421,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Via2']).insert(via2_box)
         
         # M3 pad
-        m3_enc = self.dbu(0.06)
+        m3_enc = self.dbu(0.1)
         m3_pad = via2_box.enlarged(m3_enc)
         cell.shapes(self.layers['Metal3']).insert(m3_pad)
         
@@ -2438,7 +2434,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Via3']).insert(via3_box)
         
         # M4 pad
-        m4_enc = self.dbu(0.06)
+        m4_enc = self.dbu(0.1)
         m4_pad = via3_box.enlarged(m4_enc)
         cell.shapes(self.layers['Metal4']).insert(m4_pad)
 
@@ -2496,7 +2492,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Via1']).insert(via1_box)
         
         # M2 pad
-        m2_pad = via1_box.enlarged(self.dbu(0.05))
+        m2_pad = via1_box.enlarged(self.dbu(0.1))
         cell.shapes(self.layers['Metal2']).insert(m2_pad)
         
         # Via2 (M2 to M3)
@@ -2505,7 +2501,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Via2']).insert(via2_box)
         
         # M3 pad
-        m3_pad = via2_box.enlarged(self.dbu(0.05))
+        m3_pad = via2_box.enlarged(self.dbu(0.1))
         cell.shapes(self.layers['Metal3']).insert(m3_pad)
         
         # Via3 (M3 to M4)
@@ -2557,7 +2553,7 @@ class ScalableMismatchArray:
         cell.shapes(self.layers['Via1']).insert(via1_box)
         
         # M2
-        m2_pad = via1_box.enlarged(self.dbu(0.05))
+        m2_pad = via1_box.enlarged(self.dbu(0.1))
         cell.shapes(self.layers['Metal2']).insert(m2_pad)
         
         # Via2
@@ -2649,6 +2645,7 @@ class ScalableMismatchArray:
         
         m1_width = self.dbu(METAL1_WIDTH)
         m2_width = self.dbu(METAL2_WIDTH)
+        m1_y_extension = self.dbu(0.1)
         
         dummy_count = 0
         is_min_size = TRANSISTOR_W <= 1.1 and TRANSISTOR_L <= 0.4
@@ -2692,7 +2689,7 @@ class ScalableMismatchArray:
                 drain_x - m1_width//2,
                 bar_y - m1_width//2,
                 drain_x + m1_width//2,
-                trans_center_y + m1_width//2
+                trans_center_y + m1_width//2 + m1_y_extension
             )
             array_cell.shapes(self.layers['Metal1']).insert(m1_drain_stub)
             
@@ -2700,7 +2697,7 @@ class ScalableMismatchArray:
                 source_x - m1_width//2,
                 bar_y - m1_width//2,
                 source_x + m1_width//2,
-                trans_center_y + m1_width//2
+                trans_center_y + m1_width//2 + m1_y_extension
             )
             array_cell.shapes(self.layers['Metal1']).insert(m1_source_stub)
             
