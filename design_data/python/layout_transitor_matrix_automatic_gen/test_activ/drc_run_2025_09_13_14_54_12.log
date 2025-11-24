@@ -1,0 +1,5 @@
+13-Sep-2025 16:54:13 | INFO    | KLayout version detected: 0.30.1
+13-Sep-2025 16:54:13 | INFO    | User-provided DRC rules JSON: /foss/designs/MissMatch/design_data/python/layout_transitor_matrix_automatic_gen/sg13g2_tech_default.json
+13-Sep-2025 16:54:13 | INFO    | Using DRC JSON file: /foss/designs/MissMatch/design_data/python/layout_transitor_matrix_automatic_gen/sg13g2_tech_default.json
+13-Sep-2025 16:54:13 | INFO    | Generating DRC rule deck using tables: []
+13-Sep-2025 16:54:13 | INFO    | DRC output will be written to: /foss/designs/MissMatch/design_data/python/layout_transitor_matrix_automatic_gen/test_activ
